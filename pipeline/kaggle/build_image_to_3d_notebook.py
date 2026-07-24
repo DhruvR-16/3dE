@@ -134,15 +134,23 @@ CELLS = [
     from PIL import Image
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
+    from scipy import ndimage  # ships with Kaggle; used for border flood-fill
+
     def to_rgba(img, white_thresh=245):
-        # Hunyuan3D uses the alpha channel as the foreground mask. If the image
-        # has no real alpha, make near-white pixels transparent (great for clip
-        # art / product shots on white; harmless otherwise). Pure numpy -> never
-        # pulls scipy/scikit-image.
+        # Hunyuan3D uses the alpha channel as the foreground mask. Remove only the
+        # white that is CONNECTED TO THE IMAGE BORDER (true background) — keep
+        # interior white (e.g. white stripes ON the object) solid, so the model
+        # sees a solid object, not a holey/striped cut-out (which collapses to a
+        # flat sheet). If the image already has real alpha, trust it.
         if img.mode == 'RGBA' and np.asarray(img)[..., 3].min() < 250:
             return img
         rgb = np.asarray(img.convert('RGB'))
-        alpha = np.where((rgb > white_thresh).all(2), 0, 255).astype('uint8')
+        white = (rgb > white_thresh).all(2)
+        lbl, _ = ndimage.label(white)
+        border = set(lbl[0]) | set(lbl[-1]) | set(lbl[:, 0]) | set(lbl[:, -1])
+        border.discard(0)
+        bg = np.isin(lbl, list(border)) if border else np.zeros_like(white)
+        alpha = np.where(bg, 0, 255).astype('uint8')
         return Image.fromarray(np.dstack([rgb, alpha]), 'RGBA')
 
     pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2')
