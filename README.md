@@ -1,26 +1,33 @@
-# Photo → Editable 3D Scene
+# 3dE — Photo → Editable 3D Scene
 
-Reconstruct real photos into a 3D Gaussian-splat scene where **every splat
-knows which object it belongs to** — then select, move, delete, and export
-objects like it's a 3D editor, not a frozen scan.
+Turn photos into a 3D scene you can actually edit — select, move, rotate,
+delete, and export objects like a 3D editor, not a frozen scan. Two engines:
 
-This is v1 of the build plan in
+- **Fast path (single image → 3D):** upload an image in the web app and
+  [TripoSR](https://huggingface.co/spaces/stabilityai/TripoSR) turns it into an
+  editable GLB mesh object in ~15-25 s. One image = one object.
+- **Accurate path (multi-photo → 3DGS):** 20-80 overlapping photos of a scene
+  become a labeled Gaussian-splat scene where **every splat knows which object
+  it belongs to** (COLMAP → gsplat → SAM2), run on Kaggle's free T4.
+
+Built on the plan in
 [photo-to-editable-3d-scene-architecture.md](photo-to-editable-3d-scene-architecture.md).
-Everything runs locally on free tooling; GPU work happens on Kaggle's free T4s.
+Everything runs locally on free tooling.
 
-![stack](https://img.shields.io/badge/stack-FastAPI%20·%20Three.js%20·%20gsplat%20·%20SAM2-blue)
+![stack](https://img.shields.io/badge/stack-FastAPI%20·%20Three.js%20·%20gsplat%20·%20SAM2%20·%20TripoSR-blue)
 
-## What works today (v1)
+## What works today
 
 | Verb | Status | How |
 |---|---|---|
-| Reconstruct | ✅ via Kaggle notebook | COLMAP → gsplat 3DGS training |
+| **Reconstruct (fast)** | ✅ web app | drop 1-20 images → TripoSR HF Space → per-image GLB objects |
+| Reconstruct (accurate) | ✅ via Kaggle notebook | COLMAP → gsplat 3DGS training |
 | Segment objects in 3D | ✅ via Kaggle notebook | SAM2 video propagation → projection majority vote → per-Gaussian `object_id` |
-| **Select** | ✅ local app | click (OBB raycast) or sidebar |
+| **Select** | ✅ local app | click (raycast) or sidebar, both viewers |
 | **Move / rotate / scale** | ✅ local app | transform gizmo per object, real-time |
-| **Delete / restore** | ✅ local app | removes that object's splats from the render |
-| **Export** | ✅ local app | merged `.ply` with edits baked in (optionally keeping `object_id`) |
-| Replace with generated object | 🚧 v2 | planned: TripoSR/TRELLIS via HF Spaces API (per architecture doc §7) |
+| **Delete / restore** | ✅ local app | hides that object from the render |
+| **Export (splat scenes)** | ✅ local app | merged `.ply` with edits baked in (optionally keeping `object_id`) |
+| Export (mesh scenes) | 🚧 next | merged GLB with transforms baked in |
 | Mesh export (SuGaR) | 🚧 v2 | splat `.ply` export works now; SuperSplat opens it directly |
 
 A synthetic **sample scene** ships with the repo flow, so the whole edit loop

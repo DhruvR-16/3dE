@@ -52,6 +52,17 @@ def scene_dir(scene_id: str) -> Path:
     return DATA_DIR / validate_scene_id(scene_id)
 
 
+def is_mesh_scene(scene_id: str) -> bool:
+    """A mesh scene (from the TripoSR path) has objects/*.glb and no scene.ply."""
+    sdir = scene_dir(scene_id)
+    objs = sdir / "objects"
+    return (
+        not (sdir / "scene.ply").exists()
+        and objs.is_dir()
+        and any(objs.glob("*.glb"))
+    )
+
+
 def _object_ply_name(object_id: int) -> str:
     return f"obj_{object_id:03d}.ply"
 
@@ -132,23 +143,35 @@ def build_manifest(scene_id: str, *, force: bool = False) -> SceneManifest:
 def list_scenes() -> list[SceneSummary]:
     if not DATA_DIR.exists():
         return []
+    from . import mesh_scene  # local import: mesh_scene pulls in trimesh
+
     summaries: list[SceneSummary] = []
     for sdir in sorted(DATA_DIR.iterdir()):
-        if not (sdir / "scene.ply").exists():
+        if not sdir.is_dir():
             continue
         try:
-            m = build_manifest(sdir.name)
-        except (ValueError, FileNotFoundError) as e:
+            if (sdir / "scene.ply").exists():
+                m = build_manifest(sdir.name)
+                summaries.append(
+                    SceneSummary(
+                        id=m.id,
+                        name=m.name,
+                        splat_count=m.splat_count,
+                        object_count=len(m.objects),
+                    )
+                )
+            elif is_mesh_scene(sdir.name):
+                mm = mesh_scene.build_mesh_manifest(sdir)
+                summaries.append(
+                    SceneSummary(
+                        id=mm["id"],
+                        name=mm["name"],
+                        splat_count=0,  # mesh scenes are triangles, not splats
+                        object_count=mm["object_count"],
+                    )
+                )
+        except (ValueError, FileNotFoundError, KeyError) as e:
             logger.warning("Skipping scene %s: %s", sdir.name, e)
-            continue
-        summaries.append(
-            SceneSummary(
-                id=m.id,
-                name=m.name,
-                splat_count=m.splat_count,
-                object_count=len(m.objects),
-            )
-        )
     return summaries
 
 

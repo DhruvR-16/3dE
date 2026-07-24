@@ -46,8 +46,8 @@ function selectedRecordState() {
   return { id, deleted: editor.records?.get(id)?.deleted ?? false };
 }
 
-function makeSplatEditor() {
-  return new SplatEditor(document.getElementById('viewer-root'), {
+function editorCallbacks() {
+  return {
     onSelectionChanged: () => {
       const { id, deleted } = selectedRecordState();
       ui.setSelection(id, deleted);
@@ -58,7 +58,21 @@ function makeSplatEditor() {
       ui.setSelection(sel.id, sel.deleted);
     },
     onStatus: (msg, kind) => ui.status(msg, kind),
-  });
+  };
+}
+
+function makeSplatEditor() {
+  return new SplatEditor(document.getElementById('viewer-root'), editorCallbacks());
+}
+
+function makeMeshEditor() {
+  return new MeshEditor(document.getElementById('viewer-root'), editorCallbacks());
+}
+
+async function disposeEditor() {
+  if (!editor) return;
+  if (editor.disposeViewer) await editor.disposeViewer(); // SplatEditor
+  else editor.dispose?.();                                 // MeshEditor
 }
 
 /* ------------------------------ scene loading ---------------------------- */
@@ -72,16 +86,17 @@ async function loadScene(sceneId) {
 
     const isMeshScene = manifest.objects.some((o) => o.mesh_url?.endsWith('.glb'));
     if (isMeshScene && !isUsingMeshViewer) {
-      editor?.dispose?.();
-      editor = new MeshEditor(document.getElementById('viewer-root'));
+      await disposeEditor();
+      editor = makeMeshEditor();
       isUsingMeshViewer = true;
     } else if (!isMeshScene && isUsingMeshViewer) {
-      editor?.dispose?.();
+      await disposeEditor();
       editor = makeSplatEditor();
       isUsingMeshViewer = false;
     }
 
     editor.statusCallback = (msg, kind) => ui.status(msg, kind);
+    window.__editor = editor; // dev console access (kept in sync across viewer swaps)
     await editor.loadScene(manifest);
     ui.setScenes(availableScenes, manifest.id ?? sceneId);
     showView('editor');
@@ -101,6 +116,11 @@ async function refreshSceneList(activeId) {
 
 async function handleExport() {
   if (!currentManifest) return;
+  if (isUsingMeshViewer) {
+    // Backend export is splat/PLY-only for now; be honest instead of 400-ing.
+    ui.status('Move / rotate / delete work now — GLB export for image scenes is coming next', 'info', 6000);
+    return;
+  }
   ui.status('Exporting…', 'info', 0);
   try {
     const editState = editor.getEditState ? editor.getEditState() : await editor.export?.();

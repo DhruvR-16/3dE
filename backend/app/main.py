@@ -19,10 +19,11 @@ import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import scene_store, tripor_api, mesh_scene
+from . import scene_store, triposr_api, mesh_scene
 from .models import ExportRequest, SceneManifest, SceneSummary, UploadResponse
 
 logging.basicConfig(
@@ -119,7 +120,7 @@ async def reconstruct_scene(
 
             try:
                 logger.info("TripoSR: processing %s (%d/%d)...", upload.filename, i + 1, len(images))
-                glb_bytes = tripor_api.reconstruct_image_to_glb(tmp_path)
+                glb_bytes = await run_in_threadpool(triposr_api.reconstruct_image_to_glb, tmp_path)
                 obj_path = objects_dir / f"{i:03d}.glb"
                 obj_path.write_bytes(glb_bytes)
                 labels[str(i)] = upload.filename.rsplit(".", 1)[0]
@@ -154,8 +155,15 @@ def get_scenes() -> list[SceneSummary]:
     return scene_store.list_scenes()
 
 
-@app.get("/api/scenes/{scene_id}", response_model=SceneManifest)
-def get_scene(scene_id: str) -> SceneManifest:
+@app.get("/api/scenes/{scene_id}")
+def get_scene(scene_id: str):
+    """Return a scene manifest — splat (SceneManifest) or mesh (dict) shaped."""
+    try:
+        scene_store.validate_scene_id(scene_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    if scene_store.is_mesh_scene(scene_id):
+        return mesh_scene.build_mesh_manifest(scene_store.scene_dir(scene_id))
     return _manifest_or_404(scene_id)
 
 
@@ -220,8 +228,11 @@ def get_object_file(scene_id: str, filename: str) -> FileResponse:
     """
     if not re.match(r"^(obj_)?\d{3}\.(ply|glb)$", filename):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid object filename")
-    _manifest_or_404(scene_id)  # also validates scene_id against traversal
-    path = scene_store.scene_dir(scene_id) / "objects" / filename
+    try:
+        sdir = scene_store.scene_dir(scene_id)  # validates scene_id against traversal
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    path = sdir / "objects" / filename
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{filename} not found")
 

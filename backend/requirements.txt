@@ -7,3 +7,5 @@ pydantic>=2.7
 pytest>=8.0
 requests>=2.31
 trimesh>=4.0
+gradio_client>=1.0
+pillow>=10.0

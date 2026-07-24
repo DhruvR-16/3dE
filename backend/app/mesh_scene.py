@@ -11,7 +11,24 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import trimesh
+
+
+def _mesh_stats(loaded) -> tuple[int, list[list[float]]]:
+    """Triangle count + AABB for a trimesh result, which may be a Trimesh or Scene.
+
+    TripoSR GLBs load as a Scene, whose `.faces` is empty — the geometry lives in
+    `.geometry`. Returns (triangle_count, [[minx,miny,minz],[maxx,maxy,maxz]]).
+    """
+    if isinstance(loaded, trimesh.Scene):
+        tris = sum(len(g.faces) for g in loaded.geometry.values())
+    else:
+        tris = len(getattr(loaded, "faces", []))
+    bounds = loaded.bounds
+    if bounds is None:
+        bounds = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    return tris, [bounds[0].tolist(), bounds[1].tolist()]
 
 
 def build_mesh_manifest(scene_dir: Path) -> dict:
@@ -27,10 +44,12 @@ def build_mesh_manifest(scene_dir: Path) -> dict:
             {"id": int, "label": str, "mesh_url": str, "bounds": {...}}
         ]}
     """
+    display_name = scene_dir.name.replace("-", " ").replace("_", " ").title()
     objects_dir = scene_dir / "objects"
     if not objects_dir.exists():
         return {
-            "name": scene_dir.name,
+            "id": scene_dir.name,
+            "name": display_name,
             "object_count": 0,
             "objects": [],
             "total_triangles": 0,
@@ -39,38 +58,33 @@ def build_mesh_manifest(scene_dir: Path) -> dict:
     objects = []
     total_tris = 0
 
+    labels_path = scene_dir / "labels.json"
+    labels = {}
+    if labels_path.exists():
+        try:
+            labels = json.loads(labels_path.read_text())
+        except (ValueError, OSError):
+            labels = {}
+
     for i, glb_path in enumerate(sorted(objects_dir.glob("*.glb"))):
         try:
             mesh = trimesh.load(glb_path, process=False)
-            bounds = mesh.bounds if hasattr(mesh, "bounds") else [[0, 0, 0], [1, 1, 1]]
-            tri_count = len(mesh.faces) if hasattr(mesh, "faces") else 0
+            tri_count, bounds = _mesh_stats(mesh)
             total_tris += tri_count
-
-            # Load label from labels.json if exists
-            labels_path = scene_dir / "labels.json"
-            label = "object"
-            if labels_path.exists():
-                try:
-                    labels = json.loads(labels_path.read_text())
-                    label = labels.get(str(i), f"object {i}")
-                except Exception:
-                    pass
 
             objects.append({
                 "id": i,
-                "label": label,
-                "mesh_url": f"/api/files/{scene_dir.name}/objects/{glb_path.name}",
-                "bounds": {
-                    "min": bounds[0].tolist(),
-                    "max": bounds[1].tolist(),
-                },
+                "label": labels.get(str(i), f"object {i}"),
+                "mesh_url": f"/files/scenes/{scene_dir.name}/objects/{glb_path.name}",
+                "bounds": {"min": bounds[0], "max": bounds[1]},
                 "triangle_count": tri_count,
             })
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — surface but don't abort the whole scene
             print(f"Failed to load mesh {glb_path}: {e}")
 
     return {
-        "name": scene_dir.name,
+        "id": scene_dir.name,
+        "name": display_name,
         "object_count": len(objects),
         "objects": objects,
         "total_triangles": total_tris,

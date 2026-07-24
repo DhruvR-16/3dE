@@ -1,223 +1,221 @@
 /**
- * MeshEditor: Three.js-based editor for mesh scenes from TripoSR.
+ * MeshEditor — Three.js editor for GLB mesh scenes (TripoSR output).
  *
- * Each object is a loaded GLTF mesh. Edit controls:
- * - Select: OBB raycast with keyboard/click
- * - Transform: translate, rotate, uniform scale via gizmo
- * - Delete/restore: toggle visibility
- * - Export: merged GLB with transforms baked in
+ * Mirrors the SplatEditor interface (records/selected/select/deleteObject/…) so
+ * main.js can drive either viewer. Each object is a loaded GLB wrapped in a
+ * Group; edits are transforms on that Group.
  */
 
-import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
-import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
-const ACCENT = 0xffb800;
-const DELETE_COLOR = 0xff6b6b;
+const CLICK_SLOP_PX = 4; // pointer travel under this counts as a click, not a drag
 
 export class MeshEditor {
-  constructor(container) {
+  constructor(container, callbacks = {}) {
     this.container = container;
+    this.cb = callbacks;
+    this.statusCallback = callbacks.onStatus ?? null;
+
+    this.records = new Map(); // id -> { info, group, deleted }
+    this.selected = null;
+    this.transformMode = 'translate';
+
+    const w = container.clientWidth || window.innerWidth;
+    const h = container.clientHeight || window.innerHeight;
+
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1a1a);
-    this.camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 10000);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setSize(container.clientWidth, container.clientHeight);
-    this.renderer.shadowMap.enabled = true;
+    this.camera = new THREE.PerspectiveCamera(50, w / h, 0.01, 1000);
+    this.camera.position.set(0, 0.4, 2.5);
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setSize(w, h);
+    this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     container.appendChild(this.renderer.domElement);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.autoRotate = false;
-    this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
-    this.scene.add(this.transformControls);
+    // Lights live for the editor's lifetime (loadScene must NOT clear them).
+    this.rig = new THREE.Group();
+    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    key.position.set(3, 5, 4);
+    const fill = new THREE.DirectionalLight(0xffffff, 0.9);
+    fill.position.set(-4, 1, -3);
+    this.rig.add(key, fill, new THREE.AmbientLight(0xffffff, 0.55));
+    this.scene.add(this.rig);
 
-    // Lighting
-    const light = new THREE.DirectionalLight(0xffffff, 1);
-    light.position.set(5, 10, 7);
-    light.castShadow = true;
-    this.scene.add(light);
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    this.orbit = new OrbitControls(this.camera, this.renderer.domElement);
+    this.orbit.enableDamping = true;
 
-    // State
-    this.records = new Map(); // id → {info, group, helper, deleted}
-    this.selected = null;
-    this.gltfLoader = new GLTFLoader();
-    this.statusCallback = null;
-    this.transformMode = "translate";
+    this.tc = new TransformControls(this.camera, this.renderer.domElement);
+    this.tc.addEventListener('dragging-changed', (e) => { this.orbit.enabled = !e.value; });
+    // r160–r168: TransformControls is an Object3D; r169+: add its helper.
+    this.scene.add(typeof this.tc.getHelper === 'function' ? this.tc.getHelper() : this.tc);
 
-    // Events
-    this.renderer.domElement.addEventListener("pointerdown", (e) => this._onPointerDown(e));
-    this.transformControls.addEventListener("change", () => this.renderer.render(this.scene, this.camera));
-    window.addEventListener("resize", () => this._onWindowResize());
+    this.loader = new GLTFLoader();
+    this._raycaster = new THREE.Raycaster();
+    this._pointer = new THREE.Vector2();
+    this._downXY = null;
 
-    this.animate();
+    this._onPointerDown = (e) => { this._downXY = [e.clientX, e.clientY]; };
+    this._onPointerUp = (e) => this._handlePointerUp(e);
+    this.renderer.domElement.addEventListener('pointerdown', this._onPointerDown);
+    this.renderer.domElement.addEventListener('pointerup', this._onPointerUp);
+    this._onResize = () => this._resize();
+    window.addEventListener('resize', this._onResize);
+
+    this._animate = this._animate.bind(this);
+    this._raf = requestAnimationFrame(this._animate);
   }
 
-  _status(msg, level = "info") {
-    if (this.statusCallback) this.statusCallback(msg, level);
-  }
+  _status(msg, kind) { this.statusCallback?.(msg, kind); }
 
   async loadScene(manifest) {
-    this._status(`Loading ${manifest.objects.length} objects...`);
-    this.scene.clear();
-    this.scene.add(this.controls.getObject());
-    this.scene.add(this.transformControls);
+    for (const rec of this.records.values()) this.scene.remove(rec.group);
     this.records.clear();
+    this.tc.detach();
     this.selected = null;
 
-    let bbox = new THREE.Box3();
-
-    for (const info of manifest.objects) {
-      await this._loadObject(info);
-      if (this.records.has(info.id)) {
-        const { group } = this.records.get(info.id);
-        bbox.expandByObject(group);
+    const box = new THREE.Box3();
+    const objects = manifest.objects ?? [];
+    for (let i = 0; i < objects.length; i++) {
+      const info = objects[i];
+      this._status(`Loading ${info.label} (${i + 1}/${objects.length})…`);
+      try {
+        const gltf = await this.loader.loadAsync(info.mesh_url);
+        const group = new THREE.Group();
+        group.add(gltf.scene);
+        group.userData.objectId = info.id;
+        group.traverse((o) => { if (o.isMesh) o.userData.objectId = info.id; });
+        this.scene.add(group);
+        box.expandByObject(group);
+        this.records.set(info.id, { info, group, deleted: false });
+      } catch (e) {
+        this._status(`Failed to load ${info.label}: ${e.message}`, 'error');
       }
     }
 
-    // Frame camera
-    if (!bbox.isEmpty()) {
-      const size = bbox.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const fov = this.camera.fov * (Math.PI / 180);
-      const distance = maxDim / (2 * Math.tan(fov / 2));
-      const center = bbox.getCenter(new THREE.Vector3());
-      this.camera.position.copy(center).add(new THREE.Vector3(0, 0.2 * maxDim, distance * 0.7));
-      this.camera.lookAt(center);
-      this.controls.target.copy(center);
-      this.controls.update();
+    if (!box.isEmpty()) {
+      const size = box.getSize(new THREE.Vector3());
+      const center = box.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
+      const dist = (maxDim / (2 * Math.tan((this.camera.fov * Math.PI) / 360))) * 1.5;
+      this.camera.near = maxDim / 100;
+      this.camera.far = maxDim * 100;
+      this.camera.position.copy(center).add(new THREE.Vector3(0.4 * dist, 0.35 * dist, dist));
+      this.camera.updateProjectionMatrix();
+      this.orbit.target.copy(center);
+      this.orbit.update();
     }
-
-    this._status(`Loaded ${manifest.objects.length} objects`, "ok");
+    const n = this.records.size;
+    this._status(`Loaded ${n} object${n === 1 ? '' : 's'} · click one to select`, 'ok');
   }
 
-  async _loadObject(info) {
-    try {
-      const gltf = await this._loadGLTF(info.mesh_url);
-      const group = new THREE.Group();
-      group.add(gltf.scene);
-      group.userData.objectId = info.id;
-      this.scene.add(group);
-
-      // Compute bounds
-      const bbox = new THREE.Box3().setFromObject(gltf.scene);
-      const helper = new THREE.Box3Helper(bbox, ACCENT);
-      helper.visible = false;
-      group.add(helper);
-
-      this.records.set(info.id, {
-        info,
-        group,
-        helper,
-        deleted: false,
-        initialTransform: { position: group.position.clone(), quaternion: group.quaternion.clone(), scale: group.scale.clone() },
-      });
-    } catch (e) {
-      this._status(`Failed to load ${info.label}: ${e.message}`, "error");
+  _handlePointerUp(e) {
+    if (this._downXY) {
+      const [dx, dy] = [Math.abs(e.clientX - this._downXY[0]), Math.abs(e.clientY - this._downXY[1])];
+      this._downXY = null;
+      if (dx > CLICK_SLOP_PX || dy > CLICK_SLOP_PX) return; // was an orbit drag
     }
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this._pointer.set(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    this._raycaster.setFromCamera(this._pointer, this.camera);
+    const groups = [...this.records.values()].filter((r) => !r.deleted).map((r) => r.group);
+    const hits = this._raycaster.intersectObjects(groups, true);
+    if (hits.length) {
+      let o = hits[0].object;
+      while (o && o.userData.objectId === undefined) o = o.parent;
+      if (o) { this.select(o.userData.objectId); return; }
+    }
+    this.deselect();
   }
 
-  _loadGLTF(url) {
-    return new Promise((resolve, reject) => {
-      this.gltfLoader.load(url, resolve, undefined, reject);
-    });
+  select(id) {
+    if (id === null || id === undefined) { this.deselect(); return; }
+    const rec = this.records.get(id);
+    if (!rec || rec.deleted) return;
+    this.selected = id;
+    this.tc.attach(rec.group);
+    this.tc.setMode(this.transformMode);
+    this.cb.onSelectionChanged?.(id);
   }
-
-  _onPointerDown(e) {
-    if (e.button !== 0) return;
-
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
-    raycaster.setFromCamera(mouse, this.camera);
-
-    const selectables = Array.from(this.records.values()).map((r) => r.group);
-    const intersects = raycaster.intersectObjects(selectables, true);
-
-    if (intersects.length > 0) {
-      const obj = intersects[0].object.parent;
-      const objectId = obj.userData?.objectId ?? obj.parent?.userData?.objectId;
-      if (objectId !== undefined) {
-        this.select(objectId);
-      }
-    } else {
-      this.deselect();
-    }
-  }
-
-  select(objectId) {
-    if (this.selected !== null) {
-      const old = this.records.get(this.selected);
-      if (old) old.helper.visible = false;
-    }
-    this.selected = objectId;
-    const rec = this.records.get(objectId);
-    if (rec) {
-      rec.helper.visible = true;
-      this.transformControls.attach(rec.group);
-      this.transformControls.setMode(this.transformMode);
-    }
-  }
+  selectObject(id) { this.select(id); }
 
   deselect() {
-    if (this.selected !== null) {
-      const rec = this.records.get(this.selected);
-      if (rec) rec.helper.visible = false;
-      this.transformControls.detach();
-    }
     this.selected = null;
+    this.tc.detach();
+    this.cb.onSelectionChanged?.(null);
   }
 
   setTransformMode(mode) {
-    this.transformMode = mode; // "translate", "rotate", "scale"
-    if (this.selected !== null) {
-      this.transformControls.setMode(mode);
-    }
+    this.transformMode = mode;
+    if (this.selected !== null) this.tc.setMode(mode);
+  }
+  setMode(mode) { this.setTransformMode(mode); }
+
+  deleteObject(id) {
+    const rec = this.records.get(id);
+    if (!rec) return;
+    rec.deleted = true;
+    rec.group.visible = false;
+    if (this.selected === id) this.deselect();
+    this.cb.onObjectStateChanged?.(id, true);
   }
 
-  deleteObject(objectId) {
-    const rec = this.records.get(objectId);
-    if (rec) {
-      rec.deleted = true;
-      rec.group.visible = false;
-      if (this.selected === objectId) this.deselect();
-    }
+  restoreObject(id) {
+    const rec = this.records.get(id);
+    if (!rec) return;
+    rec.deleted = false;
+    rec.group.visible = true;
+    this.cb.onObjectStateChanged?.(id, false);
   }
 
-  restoreObject(objectId) {
-    const rec = this.records.get(objectId);
-    if (rec) {
-      rec.deleted = false;
-      rec.group.visible = true;
-    }
+  getEditState() {
+    return [...this.records.entries()].map(([id, rec]) => ({
+      id,
+      deleted: rec.deleted,
+      position: rec.group.position.toArray(),
+      quaternion: rec.group.quaternion.toArray(),
+      scale: rec.group.scale.x,
+    }));
   }
 
-  async export() {
-    const objects = [];
-    for (const [id, rec] of this.records.entries()) {
-      if (!rec.deleted) {
-        objects.push({
-          id,
-          position: rec.group.position.toArray(),
-          quaternion: rec.group.quaternion.toArray(),
-          scale: rec.group.scale.toArray(),
-        });
-      }
-    }
-    return { scene_id: "exported", objects };
-  }
-
-  _onWindowResize() {
+  _resize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (!w || !h) return;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }
 
-  animate() {
-    requestAnimationFrame(() => this.animate());
-    this.controls.update();
+  _animate() {
+    this._raf = requestAnimationFrame(this._animate);
+    this.orbit.update();
     this.renderer.render(this.scene, this.camera);
+  }
+
+  dispose() {
+    cancelAnimationFrame(this._raf);
+    window.removeEventListener('resize', this._onResize);
+    this.renderer.domElement.removeEventListener('pointerdown', this._onPointerDown);
+    this.renderer.domElement.removeEventListener('pointerup', this._onPointerUp);
+    this.tc.detach();
+    this.tc.dispose?.();
+    this.orbit.dispose?.();
+    this.scene.traverse((o) => {
+      if (o.isMesh) {
+        o.geometry?.dispose?.();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        mats.forEach((m) => m?.dispose?.());
+      }
+    });
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+    this.records.clear();
   }
 }
