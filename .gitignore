@@ -1,0 +1,20 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+frontend/node_modules/
+frontend/dist/
+
+# generated scene data (source scene.ply files can be re-generated or re-imported)
+data/scenes/*/objects/
+data/scenes/*/exports/
+data/scenes/*/manifest.json
+
+# downloaded test capture (regenerate via pipeline/test-data — see README)
+pipeline/test-data/*.zip
+
+# misc
+.DS_Store
