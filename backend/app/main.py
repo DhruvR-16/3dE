@@ -214,9 +214,11 @@ async def upload_scene(
 def get_object_file(scene_id: str, filename: str) -> FileResponse:
     """Serve per-object files (PLY or GLB).
 
-    Validates filename is obj_NNN.{ply,glb} to prevent directory traversal.
+    Accepts both naming conventions to prevent directory traversal:
+      - `obj_001.ply`  (splat scenes split by scene_store)
+      - `001.glb`      (mesh scenes from the TripoSR reconstruct path)
     """
-    if not re.match(r"^\d{3}\.(ply|glb)$", filename):
+    if not re.match(r"^(obj_)?\d{3}\.(ply|glb)$", filename):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid object filename")
     _manifest_or_404(scene_id)  # also validates scene_id against traversal
     path = scene_store.scene_dir(scene_id) / "objects" / filename

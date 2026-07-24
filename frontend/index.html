@@ -1,87 +1,141 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-view="home">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Splat Editor — Photo → Editable 3D Scene</title>
+    <title>Volume — turn a photo into an editable 3D scene</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧊</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
-    <div id="app">
-      <aside id="sidebar">
-        <header class="brand">
-          <h1>Splat&nbsp;Editor</h1>
-          <p class="tagline">photo → editable 3D scene</p>
-        </header>
+    <!-- ───────────────────────── top bar ───────────────────────── -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◆</span>
+        <span class="brand-name">Volume</span>
+        <span class="brand-tag">photo → editable 3D</span>
+      </div>
+      <nav class="topbar-actions">
+        <button id="btn-home" class="btn btn-ghost" hidden>＋ New scene</button>
+        <a
+          class="btn btn-ghost"
+          href="https://github.com/DhruvR-16/3dE"
+          target="_blank"
+          rel="noopener"
+          >GitHub ↗</a
+        >
+      </nav>
+    </header>
 
-        <section class="panel">
-          <label class="panel-label" for="scene-select">Scene</label>
-          <select id="scene-select"></select>
-        </section>
+    <!-- ───────────────────────── stage (always mounted) ───────────────────────── -->
+    <main class="stage">
+      <div id="viewer-root"></div>
 
-        <section class="panel grow">
-          <div class="panel-label">Objects</div>
-          <ul id="object-list"></ul>
-        </section>
+      <!-- HOME / empty state, overlaid on the stage -->
+      <section id="home" class="home">
+        <div class="home-inner">
+          <p class="eyebrow">Reconstruct · segment · edit · export</p>
+          <h1 class="hero-title">
+            Turn a photo into a<br /><em>3D scene you can edit.</em>
+          </h1>
+          <p class="hero-sub">
+            Drop in one or more images. Each becomes a real 3D object you can
+            select, move, rotate, delete, and export — right in the browser.
+          </p>
 
-        <section class="panel">
-          <div class="panel-label">Tool</div>
-          <div class="btn-row" id="mode-buttons">
-            <button data-mode="translate" class="active" title="Move (G)">Move</button>
-            <button data-mode="rotate" title="Rotate (R)">Rotate</button>
-            <button data-mode="scale" title="Scale (S)">Scale</button>
+          <!-- primary action: drag-drop images -->
+          <div class="dropzone" id="dropzone">
+            <input id="reconstruct-images" type="file" accept="image/jpeg,image/png" multiple hidden />
+            <div class="dropzone-icon" aria-hidden="true">⬆</div>
+            <p class="dropzone-title">Drag &amp; drop images here</p>
+            <p class="dropzone-sub">or <span class="link">browse files</span> · JPG or PNG · up to 20</p>
+            <ul id="dropzone-files" class="dropzone-files"></ul>
           </div>
-          <div class="btn-row">
-            <button id="btn-delete" disabled title="Delete selected (X / Del)">Delete</button>
-            <button id="btn-restore" disabled>Restore</button>
+
+          <div class="reconstruct-row">
+            <input
+              id="reconstruct-scene-id"
+              type="text"
+              class="field"
+              placeholder="Name this scene (optional)"
+              spellcheck="false"
+            />
+            <button id="reconstruct-btn" class="btn btn-primary">Reconstruct →</button>
           </div>
-        </section>
 
-        <section class="panel">
-          <div class="panel-label">Export</div>
-          <label class="check"><input type="checkbox" id="export-labeled" />keep object ids</label>
-          <button id="btn-export" class="primary">Export edited .ply</button>
-        </section>
-
-        <section class="panel">
-          <details open>
-            <summary class="panel-label">Reconstruct from Images ✨</summary>
-            <p class="hint" style="font-size: 0.9em; margin: 0 0 0.5em 0;">Upload 1-20 images (jpg/png). TripoSR will convert each to 3D in ~10-30 sec.</p>
-            <input id="reconstruct-scene-id" type="text" placeholder="scene id (e.g. my-room)" spellcheck="false" />
-            <input id="reconstruct-images" type="file" accept="image/jpeg,image/png" multiple />
-            <button id="reconstruct-btn" class="primary">Reconstruct Scene</button>
-            <div id="reconstruct-progress" style="display: none; margin-top: 0.5em;">
-              <div style="font-size: 0.85em; color: #aaa;"><span id="progress-text">Processing...</span></div>
-              <div style="width: 100%; height: 4px; background: #333; margin-top: 0.3em; border-radius: 2px; overflow: hidden;">
-                <div id="progress-bar" style="width: 0%; height: 100%; background: #ffb800; transition: width 0.3s;"></div>
-              </div>
+          <div id="reconstruct-progress" class="progress" hidden>
+            <div class="progress-head">
+              <span id="progress-text">Processing…</span>
             </div>
-          </details>
-        </section>
+            <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+          </div>
 
-        <section class="panel">
-          <details>
-            <summary class="panel-label">Import labeled .ply</summary>
-            <input id="upload-id" type="text" placeholder="scene id (e.g. my-desk)" spellcheck="false" />
-            <input id="upload-file" type="file" accept=".ply" />
-            <button id="btn-upload">Upload &amp; split</button>
-            <p class="hint">Output of the Kaggle pipeline notebook (scene.ply with object_id) goes here.</p>
-          </details>
-        </section>
+          <div class="home-alt">
+            <button id="btn-try-sample" class="btn btn-secondary">Try a sample scene</button>
+            <details class="import-details">
+              <summary>Import a labeled <code>.ply</code> from the Kaggle pipeline</summary>
+              <div class="import-body">
+                <input id="upload-id" type="text" class="field" placeholder="scene id (e.g. my-desk)" spellcheck="false" />
+                <input id="upload-file" type="file" accept=".ply" class="field-file" />
+                <button id="btn-upload" class="btn btn-secondary">Upload &amp; split</button>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
 
-        <footer class="keys">
-          <span><kbd>click</kbd> select</span>
-          <span><kbd>G</kbd>/<kbd>R</kbd>/<kbd>S</kbd> tool</span>
-          <span><kbd>X</kbd> delete</span>
-          <span><kbd>Esc</kbd> deselect</span>
-        </footer>
-      </aside>
+      <!-- status toast -->
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </main>
 
-      <main id="viewport">
-        <div id="viewer-root"></div>
-        <div id="status" class="status"></div>
-      </main>
-    </div>
+    <!-- ───────────────────────── editor rail ───────────────────────── -->
+    <aside id="sidebar" class="sidebar">
+      <section class="card">
+        <label class="card-label" for="scene-select">Scene</label>
+        <div class="select-wrap">
+          <select id="scene-select"></select>
+        </div>
+      </section>
+
+      <section class="card grow">
+        <div class="card-label">Objects</div>
+        <ul id="object-list" class="object-list"></ul>
+      </section>
+
+      <section class="card">
+        <div class="card-label">Transform</div>
+        <div class="segmented" id="mode-buttons" role="group" aria-label="Transform tool">
+          <button data-mode="translate" class="active" title="Move (G)">Move</button>
+          <button data-mode="rotate" title="Rotate (R)">Rotate</button>
+          <button data-mode="scale" title="Scale (S)">Scale</button>
+        </div>
+        <div class="btn-row">
+          <button id="btn-delete" class="btn btn-danger-ghost" disabled title="Delete selected (X / Del)">
+            Delete
+          </button>
+          <button id="btn-restore" class="btn btn-ghost" disabled>Restore</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-label">Export</div>
+        <label class="check"><input type="checkbox" id="export-labeled" />Keep object ids</label>
+        <button id="btn-export" class="btn btn-primary">Export edited scene</button>
+      </section>
+
+      <footer class="keys">
+        <span><kbd>click</kbd> select</span>
+        <span><kbd>G</kbd><kbd>R</kbd><kbd>S</kbd> tool</span>
+        <span><kbd>X</kbd> delete</span>
+        <span><kbd>Esc</kbd> deselect</span>
+      </footer>
+    </aside>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

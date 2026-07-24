@@ -1,5 +1,22 @@
 /** Sidebar / status-bar DOM management. Pure view layer — no editor logic. */
 
+/** Deterministic pleasant color for an object with no explicit color (mesh scenes). */
+function colorForObject(o) {
+  if (Array.isArray(o.color) && o.color.length >= 3) {
+    const [r, g, b] = o.color.map((c) => Math.round(c * 255));
+    return `rgb(${r} ${g} ${b})`;
+  }
+  const hue = (Number(o.id) * 137.508) % 360; // golden angle → well-spread hues
+  return `hsl(${hue} 62% 58%)`;
+}
+
+/** Right-aligned count chip: splats for PLY scenes, triangles for GLB scenes. */
+function countForObject(o) {
+  if (typeof o.splat_count === 'number') return `${(o.splat_count / 1000).toFixed(1)}k`;
+  if (typeof o.triangle_count === 'number') return `${(o.triangle_count / 1000).toFixed(1)}k△`;
+  return '';
+}
+
 export class UI {
   /**
    * @param {{
@@ -48,8 +65,8 @@ export class UI {
     document.getElementById('reconstruct-btn').addEventListener('click', async () => {
       const sceneId = document.getElementById('reconstruct-scene-id').value.trim();
       const images = Array.from(document.getElementById('reconstruct-images').files);
-      if (!sceneId || !images.length) {
-        this.status('Pick a scene id and upload 1-20 images first', 'error');
+      if (!images.length) {
+        this.status('Add 1–20 images first (drag & drop or browse)', 'error');
         return;
       }
       await handlers.onReconstruct(sceneId, images);
@@ -76,16 +93,15 @@ export class UI {
 
         const swatch = document.createElement('span');
         swatch.className = 'swatch';
-        const [r, g, b] = o.color.map((c) => Math.round(c * 255));
-        swatch.style.background = `rgb(${r} ${g} ${b})`;
+        swatch.style.background = colorForObject(o);
 
         const label = document.createElement('span');
         label.className = 'obj-label';
-        label.textContent = o.label;
+        label.textContent = o.label ?? `object ${o.id}`;
 
         const count = document.createElement('span');
         count.className = 'obj-count';
-        count.textContent = `${(o.splat_count / 1000).toFixed(1)}k`;
+        count.textContent = countForObject(o);
 
         li.append(swatch, label, count);
         li.addEventListener('click', () => this.handlers.onSelect(o.id));
