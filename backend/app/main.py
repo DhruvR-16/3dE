@@ -179,14 +179,26 @@ def rebuild_scene(scene_id: str) -> SceneManifest:
 
 @app.post("/api/scenes/{scene_id}/export")
 def export_scene(scene_id: str, request: ExportRequest) -> FileResponse:
-    _manifest_or_404(scene_id)
     try:
-        out_path = scene_store.export_scene(scene_id, request)
+        scene_store.validate_scene_id(scene_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+    try:
+        if scene_store.is_mesh_scene(scene_id):
+            out_path = mesh_scene.export_mesh_scene(
+                scene_store.scene_dir(scene_id), request.objects
+            )
+            media_type = "model/gltf-binary"
+        else:
+            _manifest_or_404(scene_id)
+            out_path = scene_store.export_scene(scene_id, request)
+            media_type = "application/octet-stream"
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
     return FileResponse(
         out_path,
-        media_type="application/octet-stream",
+        media_type=media_type,
         filename=f"{scene_id}_{out_path.name}",
     )
 

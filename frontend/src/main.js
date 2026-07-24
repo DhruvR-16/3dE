@@ -116,11 +116,6 @@ async function refreshSceneList(activeId) {
 
 async function handleExport() {
   if (!currentManifest) return;
-  if (isUsingMeshViewer) {
-    // Backend export is splat/PLY-only for now; be honest instead of 400-ing.
-    ui.status('Move / rotate / delete work now — GLB export for image scenes is coming next', 'info', 6000);
-    return;
-  }
   ui.status('Exporting…', 'info', 0);
   try {
     const editState = editor.getEditState ? editor.getEditState() : await editor.export?.();

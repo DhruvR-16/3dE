@@ -9,6 +9,7 @@ Handles:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -91,28 +92,48 @@ def build_mesh_manifest(scene_dir: Path) -> dict:
     }
 
 
-def merge_meshes_to_glb(scene_dir: Path, output_path: Path) -> None:
-    """Merge all per-object GLB files into a single GLB.
+def _trs_matrix(position, quaternion_xyzw, uniform_scale: float) -> np.ndarray:
+    """Compose a 4x4 transform: translate * rotate * scale (matches Three.js)."""
+    x, y, z, w = (float(v) for v in quaternion_xyzw)
+    rot = trimesh.transformations.quaternion_matrix([w, x, y, z])  # trimesh wants wxyz
+    scale = np.diag([uniform_scale, uniform_scale, uniform_scale, 1.0])
+    translate = trimesh.transformations.translation_matrix([float(v) for v in position])
+    return translate @ rot @ scale
+
+
+def export_mesh_scene(scene_dir: Path, edits) -> Path:
+    """Merge per-object GLBs into one GLB with the client's edit transforms baked in.
+
+    TripoSR meshes carry per-vertex colors (no textures), so a plain
+    concatenate preserves appearance losslessly.
 
     Args:
-        scene_dir: path to scene directory (data/scenes/<id>/)
-        output_path: where to write merged GLB
+        scene_dir: the scene directory (data/scenes/<id>/)
+        edits: iterable of edit records with .id, .deleted, .position (xyz),
+               .quaternion (xyzw), and .scale (uniform).
+
+    Returns:
+        Path to the written GLB under <scene_dir>/exports/.
     """
     objects_dir = scene_dir / "objects"
-    if not objects_dir.exists():
-        raise ValueError(f"No objects directory: {objects_dir}")
+    parts: list[trimesh.Trimesh] = []
+    for edit in edits:
+        if edit.deleted:
+            continue
+        glb_path = objects_dir / f"{int(edit.id):03d}.glb"
+        if not glb_path.exists():
+            raise ValueError(f"unknown object id {edit.id} for scene {scene_dir.name!r}")
+        # force='mesh' flattens the GLB's Scene into one Trimesh (colors kept).
+        mesh = trimesh.load(glb_path, process=False, force="mesh")
+        mesh.apply_transform(_trs_matrix(edit.position, edit.quaternion, edit.scale))
+        parts.append(mesh)
 
-    # Load and combine all meshes
-    combined = None
-    for glb_path in sorted(objects_dir.glob("*.glb")):
-        mesh = trimesh.load(glb_path, process=False)
-        if combined is None:
-            combined = mesh
-        else:
-            combined = trimesh.util.concatenate([combined, mesh])
+    if not parts:
+        raise ValueError("export would be empty: every object is deleted")
 
-    if combined is None:
-        raise ValueError("No meshes to merge")
-
-    combined.export(str(output_path), file_type="glb")
-    print(f"Merged {len(list(objects_dir.glob('*.glb')))} meshes -> {output_path}")
+    merged = parts[0] if len(parts) == 1 else trimesh.util.concatenate(parts)
+    exports_dir = scene_dir / "exports"
+    exports_dir.mkdir(parents=True, exist_ok=True)
+    out_path = exports_dir / f"edited_{time.strftime('%Y%m%d_%H%M%S')}.glb"
+    merged.export(str(out_path), file_type="glb")
+    return out_path

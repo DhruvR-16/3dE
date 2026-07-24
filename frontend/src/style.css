@@ -1,30 +1,30 @@
 /* ============================================================================
    3dE — design tokens
-   Holographic dark: near-black + a violet→cyan→pink gradient system, glass
-   panels, and a slow aurora. Type: Space Grotesk / DM Sans / JetBrains Mono.
+   Calm dark: neutral slate + one indigo→azure (analogous) accent family, glass
+   panels, and a subtle aurora. Type: Space Grotesk / DM Sans / JetBrains Mono.
    ========================================================================== */
 :root {
-  /* base surfaces */
-  --bg:            oklch(13% 0.022 280);
-  --bg-2:          oklch(11% 0.02 280);
-  --glass:         oklch(80% 0.03 280 / 0.06);
-  --glass-strong:  oklch(80% 0.03 280 / 0.1);
-  --glass-border:  oklch(85% 0.04 280 / 0.14);
-  --glass-hover:   oklch(80% 0.05 285 / 0.12);
+  /* base surfaces — neutral cool slate, near-black */
+  --bg:            oklch(15% 0.008 262);
+  --bg-2:          oklch(12% 0.008 262);
+  --glass:         oklch(88% 0.008 262 / 0.05);
+  --glass-strong:  oklch(88% 0.008 262 / 0.09);
+  --glass-border:  oklch(88% 0.01 262 / 0.12);
+  --glass-hover:   oklch(72% 0.03 255 / 0.1);
 
   /* text */
-  --text:          oklch(97% 0.01 280);
-  --text-dim:      oklch(78% 0.03 285);
-  --text-faint:    oklch(62% 0.03 285);
+  --text:          oklch(97% 0.005 262);
+  --text-dim:      oklch(77% 0.01 262);
+  --text-faint:    oklch(60% 0.012 262);
 
-  /* gradient accent trio */
-  --a1: oklch(62% 0.23 285);   /* violet  */
-  --a2: oklch(74% 0.16 210);   /* cyan    */
-  --a3: oklch(70% 0.22 350);   /* pink    */
-  --grad: linear-gradient(105deg, var(--a1), var(--a2) 55%, var(--a3));
-  --grad-soft: linear-gradient(105deg, oklch(62% 0.23 285 / 0.9), oklch(70% 0.22 350 / 0.9));
-  --a1-glow: oklch(62% 0.23 285 / 0.5);
-  --a3-glow: oklch(70% 0.22 350 / 0.4);
+  /* accent — one calm indigo→azure family (analogous, no rainbow) */
+  --a1: oklch(64% 0.14 258);   /* indigo */
+  --a2: oklch(73% 0.11 235);   /* azure  */
+  --a3: var(--a2);             /* legacy alias, stays in-family */
+  --grad: linear-gradient(120deg, var(--a1), var(--a2));
+  --grad-soft: linear-gradient(120deg, oklch(64% 0.14 258 / 0.9), oklch(73% 0.11 235 / 0.9));
+  --a1-glow: oklch(64% 0.14 258 / 0.42);
+  --a3-glow: oklch(70% 0.11 245 / 0.32);
   --accent: var(--a1);
 
   /* status */
@@ -76,11 +76,10 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(38% 42% at 22% 28%, oklch(62% 0.23 285 / 0.45), transparent 60%),
-    radial-gradient(34% 38% at 80% 22%, oklch(74% 0.16 210 / 0.4), transparent 60%),
-    radial-gradient(40% 44% at 68% 82%, oklch(70% 0.22 350 / 0.38), transparent 62%),
-    radial-gradient(30% 34% at 15% 78%, oklch(66% 0.2 300 / 0.32), transparent 60%);
-  filter: blur(20px) saturate(1.15);
+    radial-gradient(42% 46% at 20% 20%, oklch(64% 0.14 258 / 0.26), transparent 62%),
+    radial-gradient(40% 44% at 84% 26%, oklch(73% 0.11 235 / 0.2), transparent 62%),
+    radial-gradient(46% 50% at 62% 90%, oklch(60% 0.12 250 / 0.18), transparent 64%);
+  filter: blur(26px) saturate(1.02);
   animation: aurora 26s var(--ease) infinite alternate;
 }
 @keyframes aurora {
@@ -106,7 +105,7 @@ a { color: inherit; }
   grid-area: topbar;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 var(--s5);
-  background: oklch(13% 0.02 280 / 0.55);
+  background: oklch(13% 0.008 262 / 0.55);
   backdrop-filter: blur(16px) saturate(1.3);
   border-bottom: 1px solid var(--glass-border);
   z-index: 20;
@@ -158,7 +157,7 @@ a { color: inherit; }
 .btn-primary:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 12px 34px -8px var(--a1-glow); }
 
 .btn-secondary { border-color: var(--glass-border); background: var(--glass); color: var(--text); }
-.btn-secondary:hover:not(:disabled) { background: var(--glass-hover); border-color: oklch(70% 0.15 285 / 0.5); }
+.btn-secondary:hover:not(:disabled) { background: var(--glass-hover); border-color: oklch(70% 0.12 250 / 0.5); }
 
 .btn-ghost { color: var(--text-dim); padding: 0.5rem 0.85rem; }
 .btn-ghost:hover:not(:disabled) { background: var(--glass); color: var(--text); }
@@ -178,8 +177,8 @@ a { color: inherit; }
   outline: none;
 }
 .field:focus, .select-wrap select:focus {
-  border-color: oklch(70% 0.18 285 / 0.7);
-  box-shadow: 0 0 0 3px oklch(62% 0.23 285 / 0.22);
+  border-color: oklch(68% 0.13 255 / 0.7);
+  box-shadow: 0 0 0 3px oklch(64% 0.14 258 / 0.22);
   background: oklch(100% 0 0 / 0.06);
 }
 .field::placeholder { color: var(--text-faint); }
@@ -201,7 +200,7 @@ a { color: inherit; }
   display: grid; place-items: center;
   overflow-y: auto; padding: var(--s8) var(--s5);
   z-index: 10;
-  background: oklch(12% 0.02 280 / 0.35);
+  background: oklch(12% 0.008 262 / 0.35);
   backdrop-filter: blur(3px);
   animation: fade-in var(--normal) var(--ease);
 }
@@ -246,7 +245,7 @@ html[data-view="editor"] .home { display: none; }
   background: radial-gradient(60% 80% at 50% 0%, var(--a1-glow), transparent 70%);
   transition: opacity var(--normal) var(--ease);
 }
-.dropzone:hover { border-color: oklch(72% 0.16 285 / 0.6); background: var(--glass-strong); box-shadow: 0 20px 60px -30px var(--a1-glow); }
+.dropzone:hover { border-color: oklch(70% 0.13 250 / 0.6); background: var(--glass-strong); box-shadow: 0 20px 60px -30px var(--a1-glow); }
 .dropzone:hover::before { opacity: 1; }
 .dropzone.dragging {
   border-color: transparent; border-style: solid;
@@ -306,7 +305,7 @@ html[data-view="editor"] .home { display: none; }
   grid-area: rail;
   display: flex; flex-direction: column; gap: var(--s3);
   padding: var(--s4);
-  background: oklch(12% 0.02 280 / 0.5);
+  background: oklch(12% 0.008 262 / 0.5);
   backdrop-filter: blur(18px) saturate(1.2);
   border-left: 1px solid var(--glass-border);
   overflow-y: auto;
@@ -336,9 +335,9 @@ html[data-view="editor"] .home { display: none; }
 }
 .object-list li:hover { background: var(--glass-hover); }
 .object-list li.selected {
-  border-color: oklch(70% 0.16 285 / 0.6);
-  background: oklch(62% 0.23 285 / 0.14);
-  box-shadow: inset 0 0 0 1px oklch(70% 0.18 285 / 0.25);
+  border-color: oklch(68% 0.13 255 / 0.6);
+  background: oklch(64% 0.14 258 / 0.18);
+  box-shadow: inset 0 0 0 1px oklch(70% 0.13 255 / 0.28);
 }
 .object-list li.deleted { opacity: 0.38; }
 .object-list li.deleted .obj-label { text-decoration: line-through; }
@@ -372,7 +371,7 @@ kbd { font: 500 0.7rem var(--font-mono); background: var(--glass); border: 1px s
   position: absolute; left: var(--s5); bottom: var(--s5);
   max-width: min(70%, 440px); padding: 0.62rem 0.9rem;
   border-radius: var(--radius-sm);
-  background: oklch(13% 0.02 280 / 0.75); backdrop-filter: blur(10px);
+  background: oklch(13% 0.008 262 / 0.75); backdrop-filter: blur(10px);
   border: 1px solid var(--glass-border);
   font-size: var(--step-0); color: var(--text-dim);
   pointer-events: none; opacity: 0; transform: translateY(6px);
