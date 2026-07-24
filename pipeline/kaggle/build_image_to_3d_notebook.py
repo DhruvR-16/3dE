@@ -75,25 +75,29 @@ CELLS = [
 
     code("""
     %%bash
-    # ---------------- Install Hunyuan3D-2 shape gen (~4-7 min; no GPU needed) ----------------
-    # Installed BEFORE the GPU guard so a P100 run still tests this whole cell,
-    # including the (risky) `hy3dgen.shapegen` import. Cloned to /tmp so the
-    # kernel OUTPUT stays tiny (just the GLBs), not the whole repo.
+    # ---------------- Install Hunyuan3D-2 shape gen (~2 min; no GPU needed) ----------------
+    # Installed BEFORE the GPU guard so a P100 run tests the whole cell (including
+    # the hy3dgen.shapegen import). Cloned to /tmp so kernel OUTPUT stays tiny.
+    #
+    # CRITICAL: Kaggle already ships torch/numpy/scipy/transformers/opencv. We add
+    # ONLY the missing deps and must NOT let pip upgrade numpy/scipy — doing so
+    # (via rembg/scikit-image) broke scipy<->numpy at import ("_blas_supports_fpe").
+    # `trimesh` needs only numpy (no scipy upgrade); diffusers/omegaconf/einops are
+    # pure/light. hy3dgen is imported via sys.path (no `pip install -e .`), and
+    # background removal uses a numpy threshold (no rembg) — nothing touches scipy.
     set -e
     cd /tmp
     [ -d Hunyuan3D-2 ] || git clone --depth 1 https://github.com/Tencent-Hunyuan/Hunyuan3D-2.git
     echo ">>> clone OK"
-    # Runtime deps for SHAPE generation only (no texture/rasterizer CUDA build).
-    # We DON'T `pip install -e .` (its setup.py is fragile) — hy3dgen is pure
-    # Python, so we import it via sys.path instead.
-    pip -q install "diffusers>=0.30" "transformers>=4.44" accelerate einops omegaconf \\
-                   trimesh rembg onnxruntime opencv-python-headless scikit-image || \\
-      { echo ">>> core deps FAILED"; exit 1; }
-    echo ">>> core deps OK"
-    pip -q install pymeshlab || echo ">>> WARN pymeshlab failed (mesh cleanup may be skipped)"
+    # pymeshlab is a self-contained wheel (only needs numpy) that hy3dgen.shapegen
+    # imports at load time; the others are pure/light. None upgrade numpy/scipy.
+    pip -q install trimesh diffusers omegaconf einops pymeshlab || { echo ">>> deps FAILED"; exit 1; }
+    echo ">>> deps OK"
     python - <<'PY'
     import sys; sys.path.insert(0, "/tmp/Hunyuan3D-2")
-    import hy3dgen; print(">>> hy3dgen", getattr(hy3dgen, "__file__", "?"))
+    import numpy, scipy, trimesh            # verify the numpy/scipy/trimesh stack is intact
+    print(">>> numpy", numpy.__version__, "| scipy", scipy.__version__, "| trimesh", trimesh.__version__)
+    import hy3dgen
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
     print(">>> shapegen import OK")
     PY
@@ -101,7 +105,12 @@ CELLS = [
 
     code("""
     # ---------------- GPU guard (fail fast on an unusable accelerator) ----------------
-    import torch
+    # Import the scientific stack IN THE KERNEL first — this is exactly what the
+    # model cell needs, and it reproduces the numpy/scipy break here (on any GPU)
+    # rather than after the model download.
+    import torch, numpy, scipy, trimesh
+    print(f"stack: numpy {numpy.__version__} | scipy {scipy.__version__} | "
+          f"trimesh {trimesh.__version__} | torch {torch.__version__}")
     if not torch.cuda.is_available():
         raise SystemExit("No GPU. Session options -> Accelerator -> 'GPU T4 x2', then Run All.")
     cap = torch.cuda.get_device_capability(); tag = f"sm_{cap[0]}{cap[1]}"
@@ -125,13 +134,16 @@ CELLS = [
     from PIL import Image
     from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline
 
-    rembg = None
-    if REMOVE_BG:
-        try:
-            from hy3dgen.rembg import BackgroundRemover
-            rembg = BackgroundRemover()
-        except Exception as e:
-            print("background remover unavailable, using images as-is:", e)
+    def to_rgba(img, white_thresh=245):
+        # Hunyuan3D uses the alpha channel as the foreground mask. If the image
+        # has no real alpha, make near-white pixels transparent (great for clip
+        # art / product shots on white; harmless otherwise). Pure numpy -> never
+        # pulls scipy/scikit-image.
+        if img.mode == 'RGBA' and np.asarray(img)[..., 3].min() < 250:
+            return img
+        rgb = np.asarray(img.convert('RGB'))
+        alpha = np.where((rgb > white_thresh).all(2), 0, 255).astype('uint8')
+        return Image.fromarray(np.dstack([rgb, alpha]), 'RGBA')
 
     pipe = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained('tencent/Hunyuan3D-2')
 
@@ -177,14 +189,12 @@ CELLS = [
         name = Path(p).stem
         print(f"[{i+1}/{len(paths)}] {name} …", flush=True)
         img = Image.open(p).convert('RGB')
-        if rembg is not None:
-            try: img = rembg(img)
-            except Exception as e: print("  rembg failed:", e)
+        img_in = to_rgba(img) if REMOVE_BG else img
         # Be tolerant of pipeline kwarg differences across hy3dgen versions.
         try:
-            mesh = pipe(image=img, num_inference_steps=STEPS, octree_resolution=OCTREE_RES)[0]
+            mesh = pipe(image=img_in, num_inference_steps=STEPS, octree_resolution=OCTREE_RES)[0]
         except TypeError:
-            mesh = pipe(image=img)[0]
+            mesh = pipe(image=img_in)[0]
         if PROJECT_COLOR:
             mesh = project_colors(mesh, img)
         ext = mesh.bounds[1] - mesh.bounds[0]
