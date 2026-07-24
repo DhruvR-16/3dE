@@ -44,6 +44,22 @@
         </section>
 
         <section class="panel">
+          <details open>
+            <summary class="panel-label">Reconstruct from Images ✨</summary>
+            <p class="hint" style="font-size: 0.9em; margin: 0 0 0.5em 0;">Upload 1-20 images (jpg/png). TripoSR will convert each to 3D in ~10-30 sec.</p>
+            <input id="reconstruct-scene-id" type="text" placeholder="scene id (e.g. my-room)" spellcheck="false" />
+            <input id="reconstruct-images" type="file" accept="image/jpeg,image/png" multiple />
+            <button id="reconstruct-btn" class="primary">Reconstruct Scene</button>
+            <div id="reconstruct-progress" style="display: none; margin-top: 0.5em;">
+              <div style="font-size: 0.85em; color: #aaa;"><span id="progress-text">Processing...</span></div>
+              <div style="width: 100%; height: 4px; background: #333; margin-top: 0.3em; border-radius: 2px; overflow: hidden;">
+                <div id="progress-bar" style="width: 0%; height: 100%; background: #ffb800; transition: width 0.3s;"></div>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <section class="panel">
           <details>
             <summary class="panel-label">Import labeled .ply</summary>
             <input id="upload-id" type="text" placeholder="scene id (e.g. my-desk)" spellcheck="false" />

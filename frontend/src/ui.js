@@ -10,6 +10,7 @@ export class UI {
    *   onRestore: () => void,
    *   onExport: () => void,
    *   onUpload: (sceneId: string, file: File) => void,
+   *   onReconstruct: (sceneId: string, images: File[]) => Promise<void>,
    * }} handlers
    */
   constructor(handlers) {
@@ -42,6 +43,16 @@ export class UI {
         return;
       }
       handlers.onUpload(sceneId, file);
+    });
+
+    document.getElementById('reconstruct-btn').addEventListener('click', async () => {
+      const sceneId = document.getElementById('reconstruct-scene-id').value.trim();
+      const images = Array.from(document.getElementById('reconstruct-images').files);
+      if (!sceneId || !images.length) {
+        this.status('Pick a scene id and upload 1-20 images first', 'error');
+        return;
+      }
+      await handlers.onReconstruct(sceneId, images);
     });
   }
 

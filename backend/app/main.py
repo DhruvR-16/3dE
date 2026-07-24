@@ -2,24 +2,27 @@
 
 Endpoints:
     GET  /api/health
-    GET  /api/scenes                     -> list of scenes
-    GET  /api/scenes/{sid}               -> full manifest (objects, bboxes, ...)
-    POST /api/scenes/{sid}/rebuild       -> force re-split from scene.ply
-    POST /api/scenes/{sid}/export        -> merged PLY download from edit state
-    POST /api/scenes                     -> upload a labeled scene.ply
-    GET  /files/scenes/{sid}/objects/... -> static per-object PLYs
+    GET  /api/scenes                        -> list of scenes
+    GET  /api/scenes/{sid}                  -> full manifest (objects, bboxes, ...)
+    POST /api/scenes/reconstruct            -> image upload -> TripoSR -> GLB scene
+    POST /api/scenes/{sid}/rebuild          -> force re-split from scene.ply
+    POST /api/scenes/{sid}/export           -> merged export download from edit state
+    POST /api/scenes                        -> upload a labeled scene.ply
+    GET  /files/scenes/{sid}/objects/...    -> static per-object files (GLB or PLY)
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import tempfile
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import scene_store
+from . import scene_store, tripor_api, mesh_scene
 from .models import ExportRequest, SceneManifest, SceneSummary, UploadResponse
 
 logging.basicConfig(
@@ -55,6 +58,95 @@ def _manifest_or_404(scene_id: str) -> SceneManifest:
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/api/scenes/reconstruct", response_model=dict, status_code=status.HTTP_201_CREATED)
+async def reconstruct_scene(
+    scene_id: str = Form(...),
+    images: list[UploadFile] = File(...),
+) -> dict:
+    """Reconstruct 3D scene from images using TripoSR.
+
+    Each image becomes one object in the final scene.
+    Processing takes ~10-30 sec per image.
+
+    Args:
+        scene_id: new scene name (validated)
+        images: list of image files (jpg/png)
+
+    Returns:
+        {"scene": SceneManifest, "processing_time_sec": float}
+    """
+    try:
+        scene_store.validate_scene_id(scene_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+
+    # Validate images
+    if not images or len(images) == 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "at least 1 image required")
+    if len(images) > 20:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "max 20 images per scene")
+
+    scene_path = scene_store.scene_dir(scene_id)
+    if scene_path.exists():
+        raise HTTPException(status.HTTP_409_CONFLICT, f"scene {scene_id!r} already exists")
+
+    scene_path.mkdir(parents=True, exist_ok=True)
+    objects_dir = scene_path / "objects"
+    objects_dir.mkdir(parents=True, exist_ok=True)
+
+    labels = {}
+    import time as time_mod
+    start = time_mod.time()
+
+    try:
+        for i, upload in enumerate(images):
+            if not upload.filename:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, f"image {i} has no filename")
+
+            ext = Path(upload.filename).suffix.lower()
+            if ext not in {".jpg", ".jpeg", ".png"}:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"image {i}: unsupported format {ext}. Use jpg/png.",
+                )
+
+            # Save image temp, run TripoSR
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp.write(await upload.read())
+                tmp_path = Path(tmp.name)
+
+            try:
+                logger.info("TripoSR: processing %s (%d/%d)...", upload.filename, i + 1, len(images))
+                glb_bytes = tripor_api.reconstruct_image_to_glb(tmp_path)
+                obj_path = objects_dir / f"{i:03d}.glb"
+                obj_path.write_bytes(glb_bytes)
+                labels[str(i)] = upload.filename.rsplit(".", 1)[0]
+                logger.info("TripoSR: saved %s", obj_path)
+            except Exception as e:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    f"TripoSR failed on image {i} ({upload.filename}): {e}",
+                )
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        # Save labels
+        (scene_path / "labels.json").write_text(__import__("json").dumps(labels, indent=2))
+
+        # Build manifest
+        manifest = mesh_scene.build_mesh_manifest(scene_path)
+        logger.info("Reconstructed scene %s: %d objects", scene_id, manifest["object_count"])
+
+        elapsed = time_mod.time() - start
+        return {"scene": manifest, "processing_time_sec": elapsed}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Reconstruction failed")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"reconstruction failed: {e}")
 
 
 @app.get("/api/scenes", response_model=list[SceneSummary])
@@ -119,11 +211,23 @@ async def upload_scene(
 
 
 @app.get("/files/scenes/{scene_id}/objects/{filename}")
-def get_object_ply(scene_id: str, filename: str) -> FileResponse:
-    if not _OBJECT_PLY_RE.match(filename):
+def get_object_file(scene_id: str, filename: str) -> FileResponse:
+    """Serve per-object files (PLY or GLB).
+
+    Validates filename is obj_NNN.{ply,glb} to prevent directory traversal.
+    """
+    if not re.match(r"^\d{3}\.(ply|glb)$", filename):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid object filename")
     _manifest_or_404(scene_id)  # also validates scene_id against traversal
     path = scene_store.scene_dir(scene_id) / "objects" / filename
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"{filename} not found")
-    return FileResponse(path, media_type="application/octet-stream")
+
+    # Infer media type from extension
+    media_type = "application/octet-stream"
+    if filename.endswith(".glb"):
+        media_type = "model/gltf-binary"
+    elif filename.endswith(".ply"):
+        media_type = "text/plain"
+
+    return FileResponse(path, media_type=media_type)
