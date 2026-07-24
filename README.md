@@ -20,8 +20,9 @@ Everything runs locally on free tooling.
 
 | Verb | Status | How |
 |---|---|---|
-| **Reconstruct (fast)** | ✅ web app | drop 1-20 images → TripoSR HF Space → per-image GLB objects |
-| Reconstruct (accurate) | ✅ via Kaggle notebook | COLMAP → gsplat 3DGS training |
+| **Reconstruct (fast)** | ✅ web app | drop 1-20 images → TripoSR HF Space → per-image GLB objects (seconds, but weak on flat/illustration inputs) |
+| **Reconstruct (volumetric)** | ✅ Kaggle T4 | Hunyuan3D-2 shape gen → genuinely 3D per-image GLB. `run_image_to_3d.py push/fetch`; far better than TripoSR on illustrations |
+| Reconstruct (accurate, multi-view) | ✅ via Kaggle notebook | COLMAP → gsplat 3DGS training |
 | Segment objects in 3D | ✅ via Kaggle notebook | SAM2 video propagation → projection majority vote → per-Gaussian `object_id` |
 | **Select** | ✅ local app | click (raycast) or sidebar, both viewers |
 | **Move / rotate / scale** | ✅ local app | transform gizmo per object, real-time |
