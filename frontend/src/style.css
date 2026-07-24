@@ -220,11 +220,16 @@ html[data-view="editor"] .home { display: none; }
 }
 .hero-title em {
   font-style: normal;
-  background: var(--grad); background-size: 200% auto;
+  background: linear-gradient(90deg, var(--a1), var(--a2), var(--a1));
+  background-size: 200% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: shimmer 6s linear infinite;
+  animation: sweep-lr 4.5s linear infinite;
 }
-@keyframes shimmer { to { background-position: 200% center; } }
+/* Left-to-right: the band travels from the left edge toward the right. */
+@keyframes sweep-lr {
+  from { background-position: 200% 0; }
+  to   { background-position: 0% 0; }
+}
 .hero-sub {
   margin: var(--s5) auto 0; max-width: 48ch;
   color: var(--text-dim); font-size: var(--step-1); line-height: 1.6;
@@ -294,9 +299,10 @@ html[data-view="editor"] .home { display: none; }
 .progress-track { height: 6px; border-radius: 999px; background: oklch(100% 0 0 / 0.08); overflow: hidden; }
 .progress-bar {
   height: 100%; width: 0%; border-radius: 999px;
-  background: var(--grad); background-size: 200% auto;
+  background: linear-gradient(90deg, var(--a1), var(--a2), var(--a1));
+  background-size: 200% 100%;
   box-shadow: 0 0 16px var(--a1-glow);
-  animation: shimmer 2s linear infinite;
+  animation: sweep-lr 1.8s linear infinite;
   transition: width var(--normal) var(--ease);
 }
 

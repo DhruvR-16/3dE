@@ -151,11 +151,32 @@ async function handleUpload(sceneId, file) {
 
 /* ---------------------- reconstruct from images (TripoSR) ---------------- */
 
-async function handleReconstruct(rawSceneId, images) {
-  const sceneId = (rawSceneId || `scene-${Date.now().toString(36)}`)
+// Friendly, paced status lines shown while TripoSR works (no real per-step
+// progress comes back from the Space, so these are a themed estimate).
+const RECONSTRUCT_MESSAGES = [
+  'Uploading your image…',
+  'Cutting out the background…',
+  'Lifting pixels into 3D…',
+  'Estimating shape & depth…',
+  'Reconstructing geometry…',
+  'Marching the surface…',
+  'Stitching the mesh together…',
+  'Baking in the colors…',
+  'Dropping it into your scene…',
+  'Almost there…',
+];
+
+function sanitizeSceneId(raw) {
+  const fallback = () => `scene-${Date.now().toString(36)}`;
+  const cleaned = (raw || fallback())
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
-    .replace(/^-+|-+$/g, '') || `scene-${Date.now().toString(36)}`;
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || fallback();
+}
+
+async function handleReconstruct(rawSceneId, images) {
+  const sceneId = sanitizeSceneId(rawSceneId);
 
   const progressEl = document.getElementById('reconstruct-progress');
   const progressBar = document.getElementById('progress-bar');
@@ -163,18 +184,23 @@ async function handleReconstruct(rawSceneId, images) {
   const btn = document.getElementById('reconstruct-btn');
 
   progressEl.hidden = false;
-  progressBar.style.width = '8%';
-  progressText.textContent = `Uploading ${images.length} image(s)…`;
   btn.disabled = true;
   ui.status(`Reconstructing “${sceneId}” from ${images.length} image(s)…`, 'info', 0);
+
+  // Cycle messages and creep the bar forward on a timer.
+  let step = 0;
+  progressText.textContent = RECONSTRUCT_MESSAGES[0];
+  progressBar.style.width = '6%';
+  const timer = setInterval(() => {
+    step = Math.min(step + 1, RECONSTRUCT_MESSAGES.length - 1);
+    progressText.textContent = RECONSTRUCT_MESSAGES[step];
+    progressBar.style.width = `${Math.min(92, 6 + step * 10)}%`;
+  }, 2500);
 
   try {
     const formData = new FormData();
     formData.append('scene_id', sceneId);
     images.forEach((img) => formData.append('images', img));
-
-    progressBar.style.width = '35%';
-    progressText.textContent = 'Building 3D objects…';
 
     const response = await fetch('/api/scenes/reconstruct', {
       method: 'POST',
@@ -187,16 +213,21 @@ async function handleReconstruct(rawSceneId, images) {
     }
 
     const result = await response.json();
+    clearInterval(timer);
     progressBar.style.width = '100%';
     progressText.textContent = `Done in ${result.processing_time_sec?.toFixed?.(1) ?? '?'}s`;
 
-    await refreshSceneList(result.scene.name);
-    ui.status(`Reconstructed ${result.scene.name}: ${result.scene.object_count} objects`, 'ok');
-    await loadScene(result.scene.name);
+    // Use the scene *id* (not the display name) for fetching — the name is
+    // title-cased with spaces and is not a valid scene id.
+    const id = result.scene.id ?? sceneId;
+    await refreshSceneList(id);
+    ui.status(`Reconstructed ${result.scene.name ?? id}: ${result.scene.object_count} object(s)`, 'ok');
+    await loadScene(id);
   } catch (err) {
     console.error(err);
     ui.status(`Reconstruction failed: ${err.message}`, 'error', 0);
   } finally {
+    clearInterval(timer);
     btn.disabled = false;
     setTimeout(() => { progressEl.hidden = true; progressBar.style.width = '0%'; }, 900);
   }
