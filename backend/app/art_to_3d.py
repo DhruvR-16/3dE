@@ -95,19 +95,42 @@ def load_art(
     return rgb, ~background
 
 
-def _height_field(mask: np.ndarray, profile: str, roundness: float) -> np.ndarray:
-    """Normalised inflation height in [0,1] — 0 at the outline, 1 at the core."""
-    dist = ndimage.distance_transform_edt(mask)
-    peak = dist.max()
+def _signed_field(
+    mask: np.ndarray, profile: str, roundness: float, antialias: float
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Continuous inflation field.
+
+    Returns ``(signed, height, peak)`` where *signed* is the signed distance to
+    the outline (positive inside, negative outside, zero on it) and *height* is
+    the normalised inflation profile in [0,1].
+
+    The signed distance is what buys smoothness: a binary in/out mask forces
+    marching cubes onto voxel midpoints, which is exactly what produced the
+    terraced look. A continuous field lets it interpolate the crossing, and a
+    light blur removes pixel-level jaggies from the traced outline without
+    noticeably moving the zero level set (a distance field is near-linear there).
+    """
+    inside = ndimage.distance_transform_edt(mask)
+    outside = ndimage.distance_transform_edt(~mask)
+    signed = inside - outside
+    if antialias > 0:
+        signed = ndimage.gaussian_filter(signed, antialias)
+
+    peak = float(inside.max())            # true radius, for physical depth scaling
     if peak <= 0:
-        return np.zeros_like(dist, dtype=float)
-    h = dist / peak
-    if profile == "round":       # spherical cap: bulges fast, flattens on top
+        return signed, np.zeros_like(signed), 0.0
+
+    # Normalise the profile by the *blurred* peak, not the true one: blurring
+    # rounds off the medial ridge, and dividing by the sharper unblurred peak
+    # would stop the profile ever reaching 1 and quietly thin the model.
+    profile_peak = max(float(signed.max()), 1e-6)
+    h = np.clip(signed, 0, None) / profile_peak
+    if profile == "round":       # spherical cap: a disc inflates to a ball
         h = np.sqrt(np.clip(h * (2 - h), 0, 1))
     elif profile == "sqrt":      # softer dome
         h = np.sqrt(h)
     # "linear" leaves h as-is: a faceted, tent-like look
-    return np.clip(h, 0, 1) ** max(roundness, 1e-3)
+    return signed, np.clip(h, 0, 1) ** max(roundness, 1e-3), peak
 
 
 def inflate_mask(
@@ -119,6 +142,7 @@ def inflate_mask(
     profile: str = "round",
     roundness: float = 1.0,
     smooth: int = 1,
+    antialias: float = 0.8,
     center: bool = True,
 ) -> trimesh.Trimesh:
     """Inflate one silhouette into a watertight, vertex-coloured 3D solid.
@@ -150,20 +174,21 @@ def inflate_mask(
     if not mask_s.any():
         raise ValueError("silhouette vanished at working resolution — raise max_dim")
 
-    dist = ndimage.distance_transform_edt(mask_s)
-    dist_peak = float(dist.max())          # the part's own "radius", in pixels
-    height = _height_field(mask_s, profile, roundness)
+    signed, height, dist_peak = _signed_field(mask_s, profile, roundness, antialias)
 
-    # Occupancy volume: symmetric about the mid-plane, so front and back mirror
-    # and the solid closes itself at the outline (height -> 0 there).
-    half_voxels = np.rint(height * (Z_RES / 2 - 1)).astype(int)
+    # Scalar field, symmetric about the mid-plane, whose zero level set IS the
+    # inflated surface: F = half-thickness(x,y) - |z - centre|. Outside the
+    # silhouette the half-thickness goes negative (the signed distance), so the
+    # solid closes itself exactly on the outline. Marching cubes at level 0 then
+    # interpolates the crossing to sub-voxel precision -- no terracing.
+    half_voxels = height * (Z_RES / 2 - 1)
+    half_voxels = np.where(signed > 0, half_voxels, signed)
     z_idx = np.arange(Z_RES)[None, None, :]
     centre = Z_RES // 2
-    volume = np.abs(z_idx - centre) <= half_voxels[..., None]
-    volume &= mask_s[..., None]
-    volume = np.pad(volume, PAD, mode="constant", constant_values=False)
+    field = half_voxels[..., None] - np.abs(z_idx - centre)
+    field = np.pad(field, PAD, mode="constant", constant_values=-1e4)
 
-    verts, faces, _normals, _vals = measure.marching_cubes(volume.astype(np.float32), level=0.5)
+    verts, faces, _normals, _vals = measure.marching_cubes(field.astype(np.float32), level=0.0)
 
     # Volume index space (row, col, z) -> world (x right, y up, z depth),
     # scaled so the artwork keeps its aspect ratio and requested thickness.
