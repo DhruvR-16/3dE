@@ -68,9 +68,16 @@ CELLS = [
 
     MAX_IMAGES = 20        # cap objects per scene
     REMOVE_BG = True       # cut the object out of its background first
-    STEPS = 30             # DiT sampling steps (quality vs time)
-    OCTREE_RES = 256       # marching-cubes resolution of the shape decoder
+    STEPS = 50             # DiT sampling steps (model default; 30 was under-cooked)
+    OCTREE_RES = 384       # shape-decoder grid (model default; 256 loses detail)
+    GUIDANCE = 5.0         # classifier-free guidance (model default)
     PROJECT_COLOR = True   # best-effort: paint front-facing verts from the image
+
+    # The DiT is generative: some seeds collapse a hard 2D input to a flat sheet.
+    # Generate with several seeds, keep the most volumetric result, and stop early
+    # once one is clearly 3D. This is what turns "flat cutout" into a real object.
+    SEEDS = [0, 1, 2, 3]
+    GOOD_RATIO = 0.25      # thinnest/longest axis considered "properly 3D"
     """),
 
     code("""
@@ -191,25 +198,58 @@ CELLS = [
 
     code("""
     # ---------------- Generate a mesh per image ----------------
-    import json, trimesh
+    import json, torch, trimesh
+
+    def volume_ratio(m):
+        \"\"\"thinnest/longest bbox axis: ~0 = flat cutout, ~1 = chunky solid.\"\"\"
+        e = sorted(m.bounds[1] - m.bounds[0])
+        return float(e[0] / max(e[2], 1e-6))
+
+    def save_model_input(img_in, path):
+        # Save EXACTLY what the model is conditioned on (after recenter/compose).
+        # Cheap, and it turns 'why is it flat?' into evidence instead of guesswork.
+        try:
+            from hy3dgen.shapegen.preprocessors import ImageProcessorV2
+            out = ImageProcessorV2()(img_in, to_tensor=False)
+            Image.fromarray(out['image']).save(path)
+        except Exception as e:
+            print("  (preview skipped:", e, ")")
+
     labels = {}
     for i, p in enumerate(paths):
         name = Path(p).stem
-        print(f"[{i+1}/{len(paths)}] {name} …", flush=True)
+        print(f"[{i+1}/{len(paths)}] {name}", flush=True)
         img = Image.open(p).convert('RGB')
         img_in = to_rgba(img) if REMOVE_BG else img
-        # Be tolerant of pipeline kwarg differences across hy3dgen versions.
-        try:
-            mesh = pipe(image=img_in, num_inference_steps=STEPS, octree_resolution=OCTREE_RES)[0]
-        except TypeError:
-            mesh = pipe(image=img_in)[0]
+        save_model_input(img_in, OUT / f"preview_{i:03d}_model_input.png")
+
+        best, best_r = None, -1.0
+        for s in SEEDS:
+            gen = torch.Generator(device='cuda').manual_seed(int(s))
+            try:
+                m = pipe(image=img_in, num_inference_steps=STEPS,
+                         octree_resolution=OCTREE_RES, guidance_scale=GUIDANCE,
+                         generator=gen)[0]
+            except TypeError:      # older/newer hy3dgen kwarg differences
+                m = pipe(image=img_in)[0]
+            r = volume_ratio(m)
+            print(f"   seed {s}: verts={len(m.vertices):>6} ratio={r:.3f}", flush=True)
+            if r > best_r:
+                best, best_r = m, r
+            if best_r >= GOOD_RATIO:
+                break          # already properly 3D — don't spend more GPU time
+
+        mesh = best
+        if best_r < 0.10:
+            print(f"   !! still flat (ratio {best_r:.3f}) — the input may be a hard "
+                  f"2D vector image; a shaded/photographic version reconstructs far better.")
         if PROJECT_COLOR:
             mesh = project_colors(mesh, img)
         ext = mesh.bounds[1] - mesh.bounds[0]
-        thin = sorted(ext)[0] / max(sorted(ext)[2], 1e-6)
-        print(f"  verts={len(mesh.vertices)} bbox={np.round(ext,3)} thinnest/longest={thin:.3f}")
+        print(f"  BEST verts={len(mesh.vertices)} bbox={np.round(ext,3)} ratio={best_r:.3f}")
         mesh.export(str(OBJ / f"{i:03d}.glb"))
         labels[str(i)] = name
+
     (OUT / "labels.json").write_text(json.dumps(labels, indent=2))
     print("wrote", len(labels), "objects to", OBJ)
     """),
