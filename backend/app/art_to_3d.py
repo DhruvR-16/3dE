@@ -19,6 +19,7 @@ CPU only, no model, no GPU — a typical drawing takes well under a second.
 
 from __future__ import annotations
 
+import colorsys
 from pathlib import Path
 
 import numpy as np
@@ -36,12 +37,24 @@ Z_RES = 64
 PAD = 2
 
 
-def load_art(path: str | Path, white_thresh: int = 245) -> tuple[np.ndarray, np.ndarray]:
+def load_art(
+    path: str | Path,
+    white_thresh: int = 245,
+    holes: str = "auto",
+) -> tuple[np.ndarray, np.ndarray]:
     """Load artwork and its foreground mask.
 
-    Uses real alpha when present. Otherwise removes only the near-white region
-    *connected to the image border*, so white INSIDE the drawing (a white stripe,
-    an eye highlight) stays part of the object instead of being punched out.
+    Uses real alpha when present. Otherwise the near-white region *connected to
+    the image border* is background. What to do with white **enclosed** by the
+    drawing is genuinely ambiguous — it can be a real hole (a donut, the counter
+    of an 'e') or a design element the same colour as the page (a white stripe,
+    an eye highlight). ``holes`` decides:
+
+      "auto"  – punch it out only if it is *blobby*; elongated regions like
+                stripes stay solid. A donut hole is roughly as tall as it is
+                wide, a stripe is not, which separates the two cases well.
+      "punch" – every enclosed light region becomes a hole.
+      "keep"  – enclosed light regions stay part of the object.
 
     Returns:
         (rgb uint8 [H,W,3], mask bool [H,W])
@@ -58,6 +71,27 @@ def load_art(path: str | Path, white_thresh: int = 245) -> tuple[np.ndarray, np.
     border = set(labels[0]) | set(labels[-1]) | set(labels[:, 0]) | set(labels[:, -1])
     border.discard(0)
     background = np.isin(labels, list(border)) if border else np.zeros_like(white)
+
+    if holes != "keep":
+        enclosed = white & ~background
+        min_area = 0.0005 * white.size          # ignore specks / anti-aliasing
+        lbl, n = ndimage.label(enclosed)
+        for sl, i in zip(ndimage.find_objects(lbl), range(1, n + 1)):
+            if sl is None:
+                continue
+            region = lbl[sl] == i
+            area = int(region.sum())
+            if area < min_area:
+                continue
+            h = sl[0].stop - sl[0].start
+            w = sl[1].stop - sl[1].start
+            # ~1 for a real hole (donut, letter counter), low for a stripe.
+            # 0.5 keeps short stripes near a cone's apex solid (measured 0.37)
+            # while still punching genuine holes.
+            compact = min(h, w) / max(h, w)
+            if holes == "punch" or compact >= 0.5:
+                background[sl] |= region
+
     return rgb, ~background
 
 
@@ -178,6 +212,40 @@ def inflate_mask(
     return mesh
 
 
+def _is_texture_not_parts(regions: list[tuple[int, np.ndarray]], area: int) -> bool:
+    """Decide whether colour variation means separate parts, or just surface.
+
+    Three signals, each aimed at a case seen in real artwork:
+
+    * **many small regions** — stripes on a party hat produce ~16 fragments that
+      together cover under half the shape. That is a pattern, not parts.
+    * **poor coverage** by the largest few regions — same story.
+    * **one hue, many lightnesses** — a smoothly shaded ball quantises into
+      concentric bands that are all the same colour, just lighter and darker.
+      Real parts (skin arm vs blue torso) differ in *hue*, not only brightness.
+    """
+    if not regions:
+        return True
+    if len(regions) > 8:
+        return True
+    if sum(s for s, _ in regions[:4]) / max(area, 1) < 0.6:
+        return True
+
+    hues = []
+    for _size, mean_rgb in regions:
+        r, g, b = (float(v) / 255.0 for v in mean_rgb)
+        hi, lo = max(r, g, b), min(r, g, b)
+        if hi - lo < 0.12:          # near-grey: hue is meaningless, skip it
+            continue
+        hues.append(colorsys.rgb_to_hsv(r, g, b)[0] * 2 * np.pi)
+    if len(hues) >= 2:
+        ang = np.asarray(hues)
+        concentration = float(np.hypot(np.cos(ang).mean(), np.sin(ang).mean()))
+        if concentration > 0.93:    # all essentially one hue -> shading
+            return True
+    return False
+
+
 def split_parts(
     mask: np.ndarray,
     rgb: np.ndarray | None = None,
@@ -235,16 +303,26 @@ def split_parts(
         # coarse colour quantisation -> dominant flat fills
         q = (rgb.astype(np.uint16) * (color_levels - 1) // 255)
         key = (q[..., 0] * color_levels + q[..., 1]) * color_levels + q[..., 2]
-        sub: list[np.ndarray] = []
+        # Thresholds are deliberately low: a character's arms are a small
+        # fraction of the body but are exactly the parts worth separating.
+        # _is_texture_not_parts then rejects the whole split if the colour
+        # variation turns out to be a pattern or shading rather than parts.
+        candidates: list[tuple[int, np.ndarray, np.ndarray]] = []
         for val in np.unique(key[part]):
             region = part & (key == val)
-            if region.sum() < max(min_area_frac * total, 0.15 * area):
-                continue                     # too small / a thin stripe: leave it
+            if region.sum() < max(min_area_frac * total, 0.05 * area):
+                continue                     # too small to be a real part
             lbl2, m2 = ndimage.label(region)
             for j in range(1, m2 + 1):
                 blob = lbl2 == j
-                if blob.sum() >= max(min_area_frac * total, 0.10 * area):
-                    sub.append(blob)
+                size = int(blob.sum())
+                if size >= max(0.5 * min_area_frac * total, 0.03 * area):
+                    candidates.append((size, rgb[blob].mean(axis=0), blob))
+        candidates.sort(key=lambda c: -c[0])
+        if _is_texture_not_parts([(s, c) for s, c, _ in candidates], area):
+            out.append(part)
+            continue
+        sub = [blob for _s, _c, blob in candidates]
         # Only accept a colour split that explains most of the part; otherwise
         # keep the part whole rather than shedding pixels into slivers.
         if len(sub) > 1 and sum(int(s.sum()) for s in sub) > 0.6 * area:

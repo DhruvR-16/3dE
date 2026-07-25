@@ -338,7 +338,10 @@ html[data-view="editor"] .home { display: none; }
   padding: var(--s4);
   display: flex; flex-direction: column; gap: var(--s3);
 }
-.card.grow { flex: 1 1 auto; min-height: 120px; overflow: hidden; }
+/* The objects card must not be squeezed to ~2 rows when the sidebar is full —
+   scenes routinely have 8+ parts. Give it a real floor and let the sidebar
+   scroll instead; the list scrolls internally beyond that. */
+.card.grow { flex: 1 1 auto; min-height: 240px; overflow: hidden; }
 .card-label {
   font: 600 var(--step--1) var(--font-mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-faint);
 }
@@ -347,7 +350,14 @@ html[data-view="editor"] .home { display: none; }
 .select-wrap::after { content: "▾"; position: absolute; right: 0.7rem; top: 50%; transform: translateY(-50%); color: var(--text-faint); pointer-events: none; font-size: 0.8rem; }
 .select-wrap select { appearance: none; padding-right: 2rem; cursor: pointer; }
 
-.object-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+.object-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 2px;
+  /* Fill the card and scroll internally. Without flex:1 + min-height:0 the ul
+     collapses to its initial height and hides most parts (scenes routinely have
+     8+ of them), even though the card around it is tall. */
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+}
 .object-list li {
   display: flex; align-items: center; gap: var(--s3);
   padding: 0.55rem 0.6rem; border-radius: var(--radius-sm);
