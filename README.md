@@ -1,38 +1,60 @@
-# 3dE — Photo → Editable 3D Scene
+# 3dE — Flat 2D art → editable 3D
 
-Turn photos into a 3D scene you can actually edit — select, move, rotate,
-delete, and export objects like a 3D editor, not a frozen scan. Two engines:
+Drop in a cartoon, character, mascot, sticker or logo and get a **solid 3D
+model, split into parts you can take apart** — select, move, rotate, delete and
+export each piece. Runs on your own machine in **under a second**. No GPU, no
+model download, no API key.
 
-- **Fast path (single image → 3D):** upload an image in the web app and
-  [TripoSR](https://huggingface.co/spaces/stabilityai/TripoSR) turns it into an
-  editable GLB mesh object in ~15-25 s. One image = one object.
-- **Accurate path (multi-photo → 3DGS):** 20-80 overlapping photos of a scene
-  become a labeled Gaussian-splat scene where **every splat knows which object
-  it belongs to** (COLMAP → gsplat → SAM2), run on Kaggle's free T4.
+![stack](https://img.shields.io/badge/stack-FastAPI%20·%20Three.js%20·%20trimesh%20·%20scikit--image-blue)
 
-Built on the plan in
-[photo-to-editable-3d-scene-architecture.md](photo-to-editable-3d-scene-architecture.md).
-Everything runs locally on free tooling.
+## Why this exists
 
-![stack](https://img.shields.io/badge/stack-FastAPI%20·%20Three.js%20·%20gsplat%20·%20SAM2%20·%20TripoSR-blue)
+Every general image→3D model (TripoSR, Hunyuan3D-2, TRELLIS) is trained on
+renders of real 3D assets, so it depends on shading and perspective cues.
+**Flat art has neither, and they all collapse it into a sheet.** Measured on the
+same party-hat clipart, thinnest/longest bounding-box ratio:
+
+| | Result | Time | Hardware |
+|---|---|---|---|
+| Hunyuan3D-2 | **0.030** — a flat sheet | ~25 s | T4 GPU |
+| 3dE | **0.53** — a real cone | **0.26 s** | laptop CPU |
+
+Flat art gives us something photos don't: a clean, closed **silhouette**. So
+depth is *constructed* rather than guessed — height grows with distance from the
+outline, mirrored front and back into a watertight solid
+([Igarashi's "Teddy"](https://dl.acm.org/doi/10.1145/311535.311602) inflation).
+It cannot come out flat, and nothing is hallucinated.
+
+Then it goes further than a single blob: the drawing is **split into parts** —
+at thin necks (a pom-pom's stem) and across flat colour fills — so each becomes
+its own editable object. No other 2D→3D tool hands you pieces you can pull apart.
 
 ## What works today
 
 | Verb | Status | How |
 |---|---|---|
-| **Reconstruct (fast)** | ✅ web app | drop 1-20 images → TripoSR HF Space → per-image GLB objects (seconds, but weak on flat/illustration inputs) |
-| **Reconstruct (volumetric)** | ✅ Kaggle T4 | Hunyuan3D-2 shape gen → genuinely 3D per-image GLB. `run_image_to_3d.py push/fetch`; far better than TripoSR on illustrations |
-| Reconstruct (accurate, multi-view) | ✅ via Kaggle notebook | COLMAP → gsplat 3DGS training |
-| Segment objects in 3D | ✅ via Kaggle notebook | SAM2 video propagation → projection majority vote → per-Gaussian `object_id` |
-| **Select** | ✅ local app | click (raycast) or sidebar, both viewers |
+| **Art → 3D** | ✅ local, ~0.3 s | drop art in the app → silhouette inflation → watertight vertex-coloured mesh |
+| **Split into parts** | ✅ local | thin-neck (erosion) + flat-colour-fill separation; stripes and shading are *not* mistaken for parts |
+| **Select** | ✅ local app | click (raycast) or sidebar |
 | **Move / rotate / scale** | ✅ local app | transform gizmo per object, real-time |
 | **Delete / restore** | ✅ local app | hides that object from the render |
-| **Export (splat scenes)** | ✅ local app | merged `.ply` with edits baked in (optionally keeping `object_id`) |
-| Export (mesh scenes) | 🚧 next | merged GLB with transforms baked in |
-| Mesh export (SuGaR) | 🚧 v2 | splat `.ply` export works now; SuperSplat opens it directly |
+| **Export** | ✅ local app | merged `.glb` (art/mesh scenes) or `.ply` (splat scenes), edits baked in |
+| Photos → editable splat scene | ✅ Kaggle T4 | the original multi-view path: COLMAP → gsplat → SAM2 → per-Gaussian `object_id` |
+| Rigging / articulation | 🚧 idea | parts are already separate, so posing is a natural next step |
 
-A synthetic **sample scene** ships with the repo flow, so the whole edit loop
-is demoable in ~2 minutes with zero GPU time.
+### Where it holds up, and where it doesn't
+
+**Good:** clean silhouettes, flat cartoon fills, outlined clip art, mascots,
+stickers, logos and letterforms, drawings with separable elements.
+
+**Honest limits:** it inflates the *outline*, so it cannot invent detail the
+silhouette doesn't contain — a head drawn in profile inflates to a
+profile-shaped solid, not a face. The back is a mirror of the front, which suits
+stickers and cartoon figures but not strongly asymmetric objects. Photographs
+are out of scope by design; use the multi-view path for those.
+
+A synthetic **sample scene** also ships with the repo, so the edit loop is
+demoable in ~2 minutes with zero GPU time.
 
 ## Quickstart (local editor, no GPU needed)
 
@@ -51,15 +73,48 @@ python3 -m venv .venv
 cd frontend && npm install && npm run dev
 ```
 
-Open http://localhost:5173 — the sample room loads automatically.
+Open http://localhost:5173 and **drag a piece of artwork onto the drop zone** —
+a PNG or JPG of a cartoon, mascot, sticker or logo. It becomes an editable 3D
+scene in about a third of a second.
+
+Two knobs on the home screen:
+
+- **Puffiness** — how far the shape inflates. `1.0` turns a circle into a full
+  sphere; lower is flatter and more sticker-like.
+- **Split into editable parts** — off gives one object, on separates the natural
+  pieces.
 
 **Controls:** click an object to select · `G`/`R`/`S` switch move/rotate/scale ·
-drag the gizmo · `X`/`Del` delete · `Esc` deselect · *Export edited .ply*
-downloads the merged scene with your edits baked in.
+drag the gizmo · `X`/`Del` delete · `Esc` deselect · *Export edited scene*
+downloads the merged model with your edits baked in.
 
-Tests: `.venv/bin/python -m pytest backend/tests -q`
+Tests: `.venv/bin/python -m pytest backend/tests -q` (30 tests)
 
-## Real scenes (Kaggle free GPU)
+## How the art pipeline works
+
+```
+artwork ─▶ silhouette          (border flood-fill; enclosed white kept unless
+   │        extraction          it is blobby enough to be a real hole)
+   │
+   ├─▶ part split               thin necks (erosion + nearest-core regrow)
+   │                            + flat colour fills, rejecting stripes/shading
+   │
+   └─▶ per part: signed distance to the outline ─▶ inflation profile
+                     │
+                     ▼
+       F(x,y,z) = half_thickness(x,y) − |z − centre|      ◀── continuous field,
+                     │                                        so marching cubes
+                     ▼                                        interpolates to
+       marching cubes at level 0 ─▶ watertight mesh            sub-voxel precision
+                     │                                        (no terracing)
+                     ▼
+       vertex colours sampled from the artwork ─▶ objects/NNN.glb
+```
+
+Core module: [backend/app/art_to_3d.py](backend/app/art_to_3d.py) ·
+endpoint `POST /api/scenes/art`.
+
+## Photo scenes (Kaggle free GPU)
 
 1. Capture 20–80 photos of a **static** scene (~70% overlap, loop around it),
    or a slow video. For video, optionally pre-extract sharp frames locally:
@@ -72,7 +127,7 @@ Tests: `.venv/bin/python -m pytest backend/tests -q`
    **Import labeled .ply** → choose an id → pick `scene.ply` → *Upload & split*.
 5. Edit and export like the sample scene.
 
-## How it works
+### How the photo pipeline works
 
 ```
 photos ─▶ COLMAP (poses) ─▶ gsplat 3DGS training ─▶ SAM2 masks ─▶ lift to 3D
@@ -97,16 +152,18 @@ transforming a labeled subset is trivial, no retraining needed.
 ## Repo layout
 
 ```
-backend/app/            FastAPI + Gaussian PLY core (load/save/transform/split/export)
-backend/tests/          pytest suite for PLY roundtrip + export math
-frontend/               Vite + Three.js + GaussianSplats3D editor UI
-scripts/                make_sample_scene.py — synthetic labeled scene, zero GPU
-pipeline/kaggle/        photo_to_editable_3d.ipynb (+ generator script)
-pipeline/scripts/       extract_frames.py — video → sharp frames helper
-data/scenes/<id>/       scene.ply (labeled) · labels.json · objects/ · exports/
+backend/app/art_to_3d.py   silhouette inflation + part splitting (the art path)
+backend/app/mesh_scene.py  GLB mesh scenes: manifest + merged export
+backend/app/gaussian_ply.py  Gaussian PLY core (load/save/transform/split/export)
+backend/tests/             pytest suite (30 tests: art core + PLY/export math)
+frontend/                  Vite + Three.js editor UI (mesh + splat viewers)
+scripts/                   make_sample_scene.py — synthetic labeled scene, zero GPU
+pipeline/kaggle/           photo_to_editable_3d.ipynb (+ generator script)
+pipeline/scripts/          extract_frames.py — video → sharp frames helper
+data/scenes/<id>/          objects/*.glb or scene.ply · labels.json · exports/
 ```
 
-## Known limitations (v1, by design — see architecture doc §13)
+## Known limitations of the photo pipeline (see architecture doc §13)
 
 - **Deleting exposes a hole**: geometry occluded by the object was never
   photographed. v2 options: 2D-inpaint + refuse, or leave the honest hole.
@@ -120,11 +177,18 @@ data/scenes/<id>/       scene.ply (labeled) · labels.json · objects/ · export
 - Reflective / transparent / thin objects reconstruct poorly (photogrammetry
   limitation, not specific to this project).
 
-## Roadmap → v2
+## Roadmap
 
-1. **Replace** verb: TripoSR (fast) → TRELLIS (quality) via free HF Spaces
-   Gradio APIs, manual placement + crude shadow blob.
-2. Depth-aware mask lifting (or full Gaussian Grouping training) on Kaggle.
-3. SuGaR mesh extraction → per-object glTF export.
-4. Hole handling after delete (2D inpaint → refuse into new Gaussians).
-5. Optional hosting: HF Spaces (backend) + static frontend.
+**Art path (the focus)**
+
+1. Better part names than "part 1/2/3" — derive them from colour and position.
+2. Asymmetric depth: let the front and back profiles differ instead of mirroring.
+3. Posing — the parts are already separate objects, so simple joints/rigging is
+   the natural next step.
+4. 3D-print sanity: manifold check, wall thickness, and a flat base option.
+
+**Photo path**
+
+5. Depth-aware mask lifting (or full Gaussian Grouping training) on Kaggle.
+6. Hole handling after delete (2D inpaint → refuse into new Gaussians).
+7. Optional hosting: HF Spaces (backend) + static frontend.
