@@ -157,6 +157,7 @@ async def art_to_3d_scene(
     scene_id: str = Form(...),
     images: list[UploadFile] = File(...),
     thickness: float = Form(0.9),
+    back: float = Form(1.0),
     parts: bool = Form(True),
 ) -> dict:
     """Turn flat 2D artwork into an editable, volumetric 3D scene.
@@ -204,7 +205,11 @@ async def art_to_3d_scene(
                 tmp_path = Path(tmp.name)
             try:
                 pieces = await run_in_threadpool(
-                    art_to_3d.art_to_parts, tmp_path, parts=parts, thickness=thickness
+                    art_to_3d.art_to_parts,
+                    tmp_path,
+                    parts=parts,
+                    thickness=thickness,
+                    back=back,
                 )
             except ValueError as e:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{upload.filename}: {e}")

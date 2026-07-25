@@ -179,6 +179,7 @@ async function handleReconstruct(rawSceneId, images) {
     formData.append('scene_id', sceneId);
     images.forEach((img) => formData.append('images', img));
     formData.append('thickness', document.getElementById('opt-thickness')?.value ?? '0.9');
+    formData.append('back', document.getElementById('opt-back')?.value ?? '1');
     formData.append('parts', document.getElementById('opt-parts')?.checked ? 'true' : 'false');
 
     // Silhouette inflation runs locally and returns in well under a second, so
@@ -322,6 +323,17 @@ async function init() {
   if (thick && thickOut) {
     const sync = () => { thickOut.textContent = Number(thick.value).toFixed(2); };
     thick.addEventListener('input', sync);
+    sync();
+  }
+  const back = document.getElementById('opt-back');
+  const backOut = document.getElementById('opt-back-out');
+  if (back && backOut) {
+    // Words beat numbers here: the useful settings are the two ends.
+    const sync = () => {
+      const v = Number(back.value);
+      backOut.textContent = v === 0 ? 'flat' : v === 1 ? 'full' : v.toFixed(2);
+    };
+    back.addEventListener('input', sync);
     sync();
   }
   showView('home');

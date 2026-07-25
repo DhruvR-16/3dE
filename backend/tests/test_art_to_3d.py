@@ -142,6 +142,40 @@ def test_surface_is_smooth_not_terraced(tmp_path):
     assert mean_dihedral_deg(mesh) < 4.0
 
 
+def _flat_area_fraction(mesh, sign: int) -> float:
+    """Share of surface lying flat against the front (+1) or back (-1) plane."""
+    normals, areas = mesh.face_normals, mesh.area_faces
+    flat = areas[normals[:, 2] * sign > 0.99].sum()
+    return float(flat / areas.sum())
+
+
+def test_back_defaults_to_mirroring_the_front(tmp_path):
+    mesh = a3.art_to_mesh(disc(tmp_path), back=1.0)
+    assert _flat_area_fraction(mesh, -1) < 0.05
+    assert _flat_area_fraction(mesh, +1) < 0.05
+
+
+def test_flat_back_produces_a_relief(tmp_path):
+    """back=0 must give a genuinely planar back — reliefs, magnets, printing."""
+    mesh = a3.art_to_mesh(disc(tmp_path), back=0.0)
+    assert _flat_area_fraction(mesh, -1) > 0.20, "back is not flat"
+    assert _flat_area_fraction(mesh, +1) < 0.05, "front should stay domed"
+    assert mesh.is_watertight, "flat back must still close the solid"
+
+
+def test_back_ratio_scales_total_depth(tmp_path):
+    """Depth follows (1 + back) x half-thickness, so it is predictable."""
+    p = disc(tmp_path)
+    depths = {}
+    for b in (0.0, 0.5, 1.0):
+        m = a3.art_to_mesh(p, back=b, thickness=1.0)
+        extents = m.bounds[1] - m.bounds[0]
+        depths[b] = extents[2]
+        width = max(extents[0], extents[1])
+    assert depths[0.0] < depths[0.5] < depths[1.0]
+    assert depths[1.0] == pytest.approx(2 * depths[0.0], rel=0.1)
+
+
 # --------------------------------------------------------------------------- #
 # silhouette / holes
 # --------------------------------------------------------------------------- #

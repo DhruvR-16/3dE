@@ -77,10 +77,14 @@ Open http://localhost:5173 and **drag a piece of artwork onto the drop zone** �
 a PNG or JPG of a cartoon, mascot, sticker or logo. It becomes an editable 3D
 scene in about a third of a second.
 
-Two knobs on the home screen:
+Three knobs on the home screen:
 
 - **Puffiness** — how far the shape inflates. `1.0` turns a circle into a full
   sphere; lower is flatter and more sticker-like.
+- **Back** — the back profile, independent of the front. `full` mirrors the
+  front (a rounded figure); `flat` gives a relief that sits flush against a
+  surface — what you want for fridge magnets, badges, wall pieces, and for
+  3D printing without supports.
 - **Split into editable parts** — off gives one object, on separates the natural
   pieces.
 

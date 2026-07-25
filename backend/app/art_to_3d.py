@@ -162,6 +162,7 @@ def inflate_mask(
     thickness: float = 0.9,   # 1.0 inflates a disc into a full ball
     profile: str = "round",
     roundness: float = 1.0,
+    back: float = 1.0,
     smooth: int = 1,
     antialias: float = 0.8,
     center: bool = True,
@@ -175,6 +176,9 @@ def inflate_mask(
         thickness: depth as a fraction of the object's longest side.
         profile: "round" | "sqrt" | "linear" inflation curve.
         roundness: >1 sharpens toward the core, <1 makes it fuller.
+        back: depth of the back relative to the front. 1.0 mirrors the front
+            (a full figure); 0.0 gives a flat back (relief / magnet, prints
+            without supports); values between shallow it out.
         smooth: Laplacian smoothing passes on the final mesh.
 
     Returns:
@@ -197,16 +201,24 @@ def inflate_mask(
 
     signed, height, dist_peak = _signed_field(mask_s, profile, roundness, antialias)
 
-    # Scalar field, symmetric about the mid-plane, whose zero level set IS the
-    # inflated surface: F = half-thickness(x,y) - |z - centre|. Outside the
-    # silhouette the half-thickness goes negative (the signed distance), so the
-    # solid closes itself exactly on the outline. Marching cubes at level 0 then
-    # interpolates the crossing to sub-voxel precision -- no terracing.
+    # Scalar field whose zero level set IS the inflated surface:
+    #   F = half-thickness(x,y) - depth(z)
+    # Outside the silhouette the half-thickness goes negative (the signed
+    # distance), so the solid closes itself exactly on the outline. Marching
+    # cubes at level 0 interpolates the crossing to sub-voxel precision.
+    #
+    # depth(z) measures front and back separately, so the two sides need not
+    # mirror: the back surface lands at `back` x the front's depth. back=1 is
+    # symmetric, back=0 gives a flat back (a relief / fridge-magnet shape that
+    # sits flat for printing).
     half_voxels = height * (Z_RES / 2 - 1)
     half_voxels = np.where(signed > 0, half_voxels, signed)
     z_idx = np.arange(Z_RES)[None, None, :]
     centre = Z_RES // 2
-    field = half_voxels[..., None] - np.abs(z_idx - centre)
+    dz = z_idx - centre
+    back_scale = 1.0 / max(float(back), 1e-3)   # back=0 -> near-vertical wall at z=centre
+    depth = np.where(dz >= 0, dz, -dz * back_scale)
+    field = half_voxels[..., None] - depth
     field = np.pad(field, PAD, mode="constant", constant_values=-1e4)
 
     verts, faces, _normals, _vals = measure.marching_cubes(field.astype(np.float32), level=0.0)
