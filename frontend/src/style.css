@@ -278,6 +278,21 @@ html[data-view="editor"] .home { display: none; }
   border-radius: 6px; padding: 0.25rem 0.55rem;
 }
 
+/* art options (puffiness + part splitting) */
+.art-options {
+  margin-top: var(--s4);
+  display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: center; gap: var(--s3) var(--s5);
+}
+.opt { display: flex; align-items: center; gap: var(--s3); font-size: var(--step-0); color: var(--text-dim); }
+.opt-label { white-space: nowrap; }
+.opt input[type="range"] { accent-color: var(--a1); width: 140px; }
+.opt output {
+  font: 500 var(--step--1) var(--font-mono);
+  color: var(--text); min-width: 3.2ch; text-align: right;
+}
+.opt-check { font-size: var(--step-0); }
+
 .reconstruct-row { margin-top: var(--s4); display: flex; gap: var(--s3); }
 .reconstruct-row .field { flex: 1; }
 .reconstruct-row .btn { flex: 0 0 auto; }

@@ -13,8 +13,10 @@ Endpoints:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -23,7 +25,7 @@ from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
-from . import scene_store, triposr_api, mesh_scene
+from . import scene_store, triposr_api, mesh_scene, art_to_3d
 from .models import ExportRequest, SceneManifest, SceneSummary, UploadResponse
 
 logging.basicConfig(
@@ -148,6 +150,97 @@ async def reconstruct_scene(
     except Exception as e:
         logger.exception("Reconstruction failed")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"reconstruction failed: {e}")
+
+
+@app.post("/api/scenes/art", status_code=status.HTTP_201_CREATED)
+async def art_to_3d_scene(
+    scene_id: str = Form(...),
+    images: list[UploadFile] = File(...),
+    thickness: float = Form(0.9),
+    parts: bool = Form(True),
+) -> dict:
+    """Turn flat 2D artwork into an editable, volumetric 3D scene.
+
+    Silhouette inflation (see art_to_3d): depth is constructed from the outline
+    rather than inferred, so it runs on CPU in well under a second and cannot
+    collapse to a flat sheet the way learned image->3D models do on flat art.
+
+    Each drawing is split into its natural parts; multiple drawings are laid out
+    side by side so the result is one editable scene.
+    """
+    try:
+        scene_store.validate_scene_id(scene_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    if not images:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "at least 1 image required")
+    if len(images) > 12:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "max 12 images per scene")
+
+    scene_path = scene_store.scene_dir(scene_id)
+    if scene_path.exists():
+        raise HTTPException(status.HTTP_409_CONFLICT, f"scene {scene_id!r} already exists")
+    objects_dir = scene_path / "objects"
+    objects_dir.mkdir(parents=True, exist_ok=True)
+
+    import time as _time
+
+    started = _time.time()
+    labels: dict[str, str] = {}
+    index = 0
+    cursor_x = 0.0          # lay successive drawings out along X
+    GAP = 0.15
+
+    try:
+        for upload in images:
+            ext = Path(upload.filename or "art.png").suffix.lower()
+            if ext not in art_to_3d.SUPPORTED_EXTS:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"unsupported format {ext!r}; use {sorted(art_to_3d.SUPPORTED_EXTS)}",
+                )
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp.write(await upload.read())
+                tmp_path = Path(tmp.name)
+            try:
+                pieces = await run_in_threadpool(
+                    art_to_3d.art_to_parts, tmp_path, parts=parts, thickness=thickness
+                )
+            except ValueError as e:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, f"{upload.filename}: {e}")
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+            if not pieces:
+                continue
+            stem = Path(upload.filename or "art").stem
+
+            lo = min(m.bounds[0][0] for m, _ in pieces)
+            hi = max(m.bounds[1][0] for m, _ in pieces)
+            shift = cursor_x - lo if len(images) > 1 else 0.0
+            for j, (mesh, _mask) in enumerate(pieces):
+                if shift:
+                    mesh.apply_translation([shift, 0.0, 0.0])
+                mesh.export(str(objects_dir / f"{index:03d}.glb"))
+                labels[str(index)] = stem if len(pieces) == 1 else f"{stem} · part {j + 1}"
+                index += 1
+            cursor_x += (hi - lo) + GAP
+
+        if index == 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "no usable silhouette found")
+
+        (scene_path / "labels.json").write_text(json.dumps(labels, indent=2))
+        manifest = mesh_scene.build_mesh_manifest(scene_path)
+        logger.info("art->3D scene %s: %d object(s)", scene_id, manifest["object_count"])
+        return {"scene": manifest, "processing_time_sec": _time.time() - started}
+
+    except HTTPException:
+        shutil.rmtree(scene_path, ignore_errors=True)   # don't leave a half-built scene
+        raise
+    except Exception as e:
+        shutil.rmtree(scene_path, ignore_errors=True)
+        logger.exception("art->3D failed")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"art->3D failed: {e}")
 
 
 @app.get("/api/scenes", response_model=list[SceneSummary])

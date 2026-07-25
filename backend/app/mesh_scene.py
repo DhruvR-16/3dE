@@ -16,6 +16,19 @@ import numpy as np
 import trimesh
 
 
+def _mean_color(loaded) -> list[float] | None:
+    """Average vertex colour as 0-1 RGB, so the sidebar swatch matches the part."""
+    meshes = list(loaded.geometry.values()) if isinstance(loaded, trimesh.Scene) else [loaded]
+    totals, count = np.zeros(3), 0
+    for m in meshes:
+        vc = getattr(getattr(m, "visual", None), "vertex_colors", None)
+        if vc is None or len(vc) == 0:
+            continue
+        totals += np.asarray(vc)[:, :3].mean(axis=0)
+        count += 1
+    return (totals / count / 255.0).tolist() if count else None
+
+
 def _mesh_stats(loaded) -> tuple[int, list[list[float]]]:
     """Triangle count + AABB for a trimesh result, which may be a Trimesh or Scene.
 
@@ -73,13 +86,17 @@ def build_mesh_manifest(scene_dir: Path) -> dict:
             tri_count, bounds = _mesh_stats(mesh)
             total_tris += tri_count
 
-            objects.append({
+            entry = {
                 "id": i,
                 "label": labels.get(str(i), f"object {i}"),
                 "mesh_url": f"/files/scenes/{scene_dir.name}/objects/{glb_path.name}",
                 "bounds": {"min": bounds[0], "max": bounds[1]},
                 "triangle_count": tri_count,
-            })
+            }
+            color = _mean_color(mesh)
+            if color is not None:
+                entry["color"] = color
+            objects.append(entry)
         except Exception as e:  # noqa: BLE001 — surface but don't abort the whole scene
             print(f"Failed to load mesh {glb_path}: {e}")
 

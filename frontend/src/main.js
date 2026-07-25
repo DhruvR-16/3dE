@@ -151,21 +151,6 @@ async function handleUpload(sceneId, file) {
 
 /* ---------------------- reconstruct from images (TripoSR) ---------------- */
 
-// Friendly, paced status lines shown while TripoSR works (no real per-step
-// progress comes back from the Space, so these are a themed estimate).
-const RECONSTRUCT_MESSAGES = [
-  'Uploading your image…',
-  'Cutting out the background…',
-  'Lifting pixels into 3D…',
-  'Estimating shape & depth…',
-  'Reconstructing geometry…',
-  'Marching the surface…',
-  'Stitching the mesh together…',
-  'Baking in the colors…',
-  'Dropping it into your scene…',
-  'Almost there…',
-];
-
 function sanitizeSceneId(raw) {
   const fallback = () => `scene-${Date.now().toString(36)}`;
   const cleaned = (raw || fallback())
@@ -185,24 +170,20 @@ async function handleReconstruct(rawSceneId, images) {
 
   progressEl.hidden = false;
   btn.disabled = true;
-  ui.status(`Reconstructing “${sceneId}” from ${images.length} image(s)…`, 'info', 0);
-
-  // Cycle messages and creep the bar forward on a timer.
-  let step = 0;
-  progressText.textContent = RECONSTRUCT_MESSAGES[0];
-  progressBar.style.width = '6%';
-  const timer = setInterval(() => {
-    step = Math.min(step + 1, RECONSTRUCT_MESSAGES.length - 1);
-    progressText.textContent = RECONSTRUCT_MESSAGES[step];
-    progressBar.style.width = `${Math.min(92, 6 + step * 10)}%`;
-  }, 2500);
+  ui.status(`Inflating “${sceneId}” from ${images.length} image(s)…`, 'info', 0);
+  progressText.textContent = 'Tracing the outline…';
+  progressBar.style.width = '35%';
 
   try {
     const formData = new FormData();
     formData.append('scene_id', sceneId);
     images.forEach((img) => formData.append('images', img));
+    formData.append('thickness', document.getElementById('opt-thickness')?.value ?? '0.9');
+    formData.append('parts', document.getElementById('opt-parts')?.checked ? 'true' : 'false');
 
-    const response = await fetch('/api/scenes/reconstruct', {
+    // Silhouette inflation runs locally and returns in well under a second, so
+    // there's no long job to narrate here.
+    const response = await fetch('/api/scenes/art', {
       method: 'POST',
       body: formData,
     });
@@ -213,21 +194,21 @@ async function handleReconstruct(rawSceneId, images) {
     }
 
     const result = await response.json();
-    clearInterval(timer);
     progressBar.style.width = '100%';
-    progressText.textContent = `Done in ${result.processing_time_sec?.toFixed?.(1) ?? '?'}s`;
+    const secs = result.processing_time_sec;
+    progressText.textContent = `Done in ${secs != null ? secs.toFixed(2) : '?'}s`;
 
     // Use the scene *id* (not the display name) for fetching — the name is
     // title-cased with spaces and is not a valid scene id.
     const id = result.scene.id ?? sceneId;
     await refreshSceneList(id);
-    ui.status(`Reconstructed ${result.scene.name ?? id}: ${result.scene.object_count} object(s)`, 'ok');
+    const n = result.scene.object_count;
+    ui.status(`${result.scene.name ?? id}: ${n} editable part${n === 1 ? '' : 's'}`, 'ok');
     await loadScene(id);
   } catch (err) {
     console.error(err);
-    ui.status(`Reconstruction failed: ${err.message}`, 'error', 0);
+    ui.status(`Couldn't make that 3D: ${err.message}`, 'error', 0);
   } finally {
-    clearInterval(timer);
     btn.disabled = false;
     setTimeout(() => { progressEl.hidden = true; progressBar.style.width = '0%'; }, 900);
   }
@@ -336,6 +317,13 @@ async function init() {
 
   bindKeyboard();
   bindDropzone();
+  const thick = document.getElementById('opt-thickness');
+  const thickOut = document.getElementById('opt-thickness-out');
+  if (thick && thickOut) {
+    const sync = () => { thickOut.textContent = Number(thick.value).toFixed(2); };
+    thick.addEventListener('input', sync);
+    sync();
+  }
   showView('home');
   window.__editor = editor;
 

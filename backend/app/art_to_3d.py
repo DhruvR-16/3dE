@@ -27,6 +27,8 @@ from PIL import Image
 from scipy import ndimage
 from skimage import measure
 
+SUPPORTED_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+
 # Voxel depth of the occupancy volume. 64 is plenty: the silhouette carries the
 # detail, Z only carries the smooth inflation profile.
 Z_RES = 64

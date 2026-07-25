@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>3dE — turn a photo into an editable 3D scene</title>
+    <title>3dE — turn flat 2D art into editable 3D</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧊</text></svg>" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -18,7 +18,7 @@
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">◈</span>
         <span class="brand-name">3dE</span>
-        <span class="brand-tag">photo → editable 3D</span>
+        <span class="brand-tag">2D art → editable 3D</span>
       </div>
       <nav class="topbar-actions">
         <button id="btn-home" class="btn btn-ghost" hidden>＋ New scene</button>
@@ -39,22 +39,34 @@
       <!-- HOME / empty state, overlaid on the stage -->
       <section id="home" class="home">
         <div class="home-inner">
-          <p class="eyebrow">Reconstruct · segment · edit · export</p>
+          <p class="eyebrow">Inflate · split · edit · export</p>
           <h1 class="hero-title">
-            Turn a photo into a<br /><em>3D scene you can edit.</em>
+            Turn flat 2D art into<br /><em>3D you can take apart.</em>
           </h1>
           <p class="hero-sub">
-            Drop in one or more images. Each becomes a real 3D object you can
-            select, move, rotate, delete, and export — right in the browser.
+            Drop in a cartoon, character, mascot, sticker or logo. It becomes a
+            solid 3D model — split into parts you can select, move, delete and
+            export. Runs on your machine in under a second.
           </p>
 
           <!-- primary action: drag-drop images -->
           <div class="dropzone" id="dropzone">
             <input id="reconstruct-images" type="file" accept="image/jpeg,image/png" multiple hidden />
             <div class="dropzone-icon" aria-hidden="true">⬆</div>
-            <p class="dropzone-title">Drag &amp; drop images here</p>
-            <p class="dropzone-sub">or <span class="link">browse files</span> · JPG or PNG · up to 20</p>
+            <p class="dropzone-title">Drag &amp; drop your artwork here</p>
+            <p class="dropzone-sub">or <span class="link">browse files</span> · PNG, JPG or WEBP · up to 12</p>
             <ul id="dropzone-files" class="dropzone-files"></ul>
+          </div>
+
+          <div class="art-options">
+            <label class="opt">
+              <span class="opt-label">Puffiness</span>
+              <input id="opt-thickness" type="range" min="0.3" max="1.4" step="0.05" value="0.9" />
+              <output id="opt-thickness-out">0.90</output>
+            </label>
+            <label class="check opt-check">
+              <input type="checkbox" id="opt-parts" checked />Split into editable parts
+            </label>
           </div>
 
           <div class="reconstruct-row">
@@ -62,10 +74,10 @@
               id="reconstruct-scene-id"
               type="text"
               class="field"
-              placeholder="Name this scene (optional)"
+              placeholder="Name this model (optional)"
               spellcheck="false"
             />
-            <button id="reconstruct-btn" class="btn btn-primary">Reconstruct →</button>
+            <button id="reconstruct-btn" class="btn btn-primary">Make it 3D →</button>
           </div>
 
           <div id="reconstruct-progress" class="progress" hidden>
