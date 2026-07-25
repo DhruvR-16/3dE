@@ -218,11 +218,18 @@ async def art_to_3d_scene(
             lo = min(m.bounds[0][0] for m, _ in pieces)
             hi = max(m.bounds[1][0] for m, _ in pieces)
             shift = cursor_x - lo if len(images) > 1 else 0.0
+            # Name parts by colour/position ("purple top") rather than "part 2".
+            part_names = art_to_3d.describe_parts(pieces)
             for j, (mesh, _mask) in enumerate(pieces):
                 if shift:
                     mesh.apply_translation([shift, 0.0, 0.0])
                 mesh.export(str(objects_dir / f"{index:03d}.glb"))
-                labels[str(index)] = stem if len(pieces) == 1 else f"{stem} · part {j + 1}"
+                if len(pieces) == 1:
+                    labels[str(index)] = stem
+                elif len(images) > 1:
+                    labels[str(index)] = f"{stem} · {part_names[j]}"
+                else:
+                    labels[str(index)] = part_names[j]
                 index += 1
             cursor_x += (hi - lo) + GAP
 

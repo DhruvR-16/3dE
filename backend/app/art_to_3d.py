@@ -42,7 +42,17 @@ def load_art(
     white_thresh: int = 245,
     holes: str = "auto",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Load artwork and its foreground mask.
+    """Load artwork and its foreground mask. See :func:`analyse_art`."""
+    rgb, mask, _kept = analyse_art(path, white_thresh, holes)
+    return rgb, mask
+
+
+def analyse_art(
+    path: str | Path,
+    white_thresh: int = 245,
+    holes: str = "auto",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load artwork, its foreground mask, and any page-coloured region kept solid.
 
     Uses real alpha when present. Otherwise the near-white region *connected to
     the image border* is background. What to do with white **enclosed** by the
@@ -56,15 +66,20 @@ def load_art(
       "punch" – every enclosed light region becomes a hole.
       "keep"  – enclosed light regions stay part of the object.
 
+    The third return value marks page-coloured pixels that were *kept* (an
+    elongated gap, e.g. between a character's legs). They belong to the solid so
+    it stays closed, but they must not be promoted into their own coloured part.
+
     Returns:
-        (rgb uint8 [H,W,3], mask bool [H,W])
+        (rgb uint8 [H,W,3], mask bool [H,W], kept_enclosed bool [H,W])
     """
     img = Image.open(path).convert("RGBA")
     arr = np.asarray(img)
     rgb = arr[..., :3].copy()
 
     if arr[..., 3].min() < 250:                      # genuine alpha channel
-        return rgb, arr[..., 3] > 127
+        alpha_mask = arr[..., 3] > 127
+        return rgb, alpha_mask, np.zeros_like(alpha_mask)
 
     white = (rgb > white_thresh).all(axis=2)
     labels, _ = ndimage.label(white)
@@ -72,8 +87,9 @@ def load_art(
     border.discard(0)
     background = np.isin(labels, list(border)) if border else np.zeros_like(white)
 
+    enclosed = white & ~background
+    kept_enclosed = np.zeros_like(white)     # page-coloured, but left solid
     if holes != "keep":
-        enclosed = white & ~background
         min_area = 0.0005 * white.size          # ignore specks / anti-aliasing
         lbl, n = ndimage.label(enclosed)
         for sl, i in zip(ndimage.find_objects(lbl), range(1, n + 1)):
@@ -91,8 +107,13 @@ def load_art(
             compact = min(h, w) / max(h, w)
             if holes == "punch" or compact >= 0.5:
                 background[sl] |= region
+            else:
+                kept_enclosed[sl] |= region
+    else:
+        kept_enclosed = enclosed.copy()
 
-    return rgb, ~background
+    mask = ~background
+    return rgb, mask, kept_enclosed & mask
 
 
 def _signed_field(
@@ -279,6 +300,7 @@ def split_parts(
     neck_frac: float = 0.02,
     by_color: bool = True,
     color_levels: int = 6,
+    ignore: np.ndarray | None = None,
 ) -> list[np.ndarray]:
     """Split one silhouette into separately editable parts.
 
@@ -341,8 +363,13 @@ def split_parts(
             for j in range(1, m2 + 1):
                 blob = lbl2 == j
                 size = int(blob.sum())
-                if size >= max(0.5 * min_area_frac * total, 0.03 * area):
-                    candidates.append((size, rgb[blob].mean(axis=0), blob))
+                if size < max(0.5 * min_area_frac * total, 0.03 * area):
+                    continue
+                # Page-coloured gaps kept solid (between a character's legs) are
+                # part of the silhouette, not an object of their own.
+                if ignore is not None and (blob & ignore).sum() > 0.6 * size:
+                    continue
+                candidates.append((size, rgb[blob].mean(axis=0), blob))
         candidates.sort(key=lambda c: -c[0])
         if _is_texture_not_parts([(s, c) for s, c, _ in candidates], area):
             out.append(part)
@@ -380,8 +407,8 @@ def art_to_parts(
     Each part is inflated in place, so the pieces stay in their original relative
     positions and reassemble into the original drawing.
     """
-    rgb, mask = load_art(path)
-    masks = split_parts(mask, rgb) if parts else [mask]
+    rgb, mask, kept_enclosed = analyse_art(path)
+    masks = split_parts(mask, rgb, ignore=kept_enclosed) if parts else [mask]
 
     result: list[tuple[trimesh.Trimesh, np.ndarray]] = []
     for m in masks:
@@ -401,6 +428,126 @@ def art_to_parts(
     # Biggest part first — it reads as the "main" object in the sidebar.
     result.sort(key=lambda mm: -len(mm[0].faces))
     return result
+
+
+def _colour_name(rgb: np.ndarray) -> str:
+    """A short, human colour word for an RGB triple."""
+    r, g, b = (float(c) / 255.0 for c in rgb[:3])
+    h, s, v = colorsys.rgb_to_hsv(r, g, b)
+    if v < 0.20:
+        return "black"
+    if s < 0.12:
+        return "white" if v > 0.80 else ("grey" if v > 0.45 else "dark grey")
+    deg = h * 360.0
+    if deg < 15 or deg >= 345:
+        return "red" if v > 0.5 else "maroon"
+    if deg < 45:
+        return "orange" if v > 0.6 else "brown"
+    if deg < 70:
+        return "yellow" if v > 0.5 else "olive"
+    if deg < 160:
+        return "green"
+    if deg < 200:
+        return "teal"
+    if deg < 250:
+        return "blue"
+    if deg < 290:
+        return "purple"
+    return "pink"
+
+
+def _dominant_colour(mesh: trimesh.Trimesh) -> np.ndarray:
+    """Most common vertex colour, quantised — robust to stripes, unlike a mean.
+
+    Averaging a blue-and-yellow striped cone gives a muddy grey that names
+    nothing; the modal colour gives "blue", which is what a person would say.
+    """
+    vc = getattr(getattr(mesh, "visual", None), "vertex_colors", None)
+    if vc is None or len(vc) == 0:
+        return np.array([128, 128, 128])
+    cols = np.asarray(vc)[:, :3]
+
+    def modal(sample: np.ndarray) -> np.ndarray:
+        q = sample // 32                             # 8 levels per channel
+        key = (q[:, 0].astype(int) * 8 + q[:, 1]) * 8 + q[:, 2]
+        winner = np.bincount(key).argmax()
+        return sample[key == winner].mean(axis=0).astype(int)
+
+    best = modal(cols)
+    # A part can carry page-coloured filler — the gap between a character's legs
+    # is kept solid so the model stays closed, but the leg is navy, not white.
+    # If page-colour wins yet real paint is well represented, name it by paint.
+    painted = cols[(cols < 235).any(axis=1)]
+    if (best > 235).all() and len(painted) > 0.2 * len(cols):
+        return modal(painted)
+    return best
+
+
+def _position_words(frac: float, axis: str) -> str:
+    """Turn a 0-1 position along an axis into a word."""
+    if axis == "y":
+        return "top" if frac > 0.62 else ("bottom" if frac < 0.38 else "middle")
+    return "left" if frac < 0.38 else ("right" if frac > 0.62 else "centre")
+
+
+def describe_parts(pieces: list[tuple[trimesh.Trimesh, np.ndarray]]) -> list[str]:
+    """Readable names for parts: colour, plus position only when it disambiguates.
+
+    "purple top" beats "part 2". Position words are added only where several
+    parts share a colour (a character's two skin-coloured arms), and the axis
+    chosen is whichever actually separates them.
+    """
+    if not pieces:
+        return []
+    meshes = [m for m, _ in pieces]
+    colours = [_colour_name(_dominant_colour(m)) for m in meshes]
+    centres = np.array([m.bounds.mean(axis=0) for m in meshes])
+
+    lo, hi = centres.min(axis=0), centres.max(axis=0)
+    span = np.where((hi - lo) > 1e-9, hi - lo, 1.0)
+    frac = (centres - lo) / span
+
+    def word_for(i: int, tied: list[int], axis: str) -> str:
+        """Position word for part *i* among *tied*, along the given axis."""
+        idx = 1 if axis == "y" else 0
+        vals = frac[tied, idx]
+        rel = (frac[i, idx] - vals.min()) / max(vals.max() - vals.min(), 1e-9)
+        return _position_words(rel, axis)
+
+    def dominant_axis(tied: list[int]) -> str:
+        # Compare RAW distances, not the per-axis normalised fractions — those
+        # are rescaled to 0-1 on every axis, which erases exactly the difference
+        # we are asking about (side-by-side letters looked vertically stacked).
+        spread_y = centres[tied, 1].max() - centres[tied, 1].min()
+        spread_x = centres[tied, 0].max() - centres[tied, 0].min()
+        return "y" if spread_y >= spread_x else "x"
+
+    # Pass 1: colour, plus a position word where a colour is shared.
+    names: list[str] = []
+    for i, colour in enumerate(colours):
+        tied = [j for j, c in enumerate(colours) if c == colour]
+        if len(tied) == 1:
+            names.append(colour)
+        else:
+            names.append(f"{colour} {word_for(i, tied, dominant_axis(tied))}")
+
+    # Pass 2: anything still identical (two legs both "blue bottom") is split on
+    # whichever axis separates *that subgroup*, which reads far better than a
+    # trailing number. Pass 1 chose its axis over the whole colour group, so the
+    # subgroup usually resolves on the other one — but let the data decide.
+    for name in {n for n in names if names.count(n) > 1}:
+        tied = [i for i, n in enumerate(names) if n == name]
+        axis = dominant_axis(tied)
+        for i in tied:
+            names[i] = f"{name} {word_for(i, tied, axis)}"
+
+    # Last resort: guarantee uniqueness.
+    seen: dict[str, int] = {}
+    unique: list[str] = []
+    for n in names:
+        seen[n] = seen.get(n, 0) + 1
+        unique.append(n if seen[n] == 1 else f"{n} {seen[n]}")
+    return unique
 
 
 def volume_ratio(mesh: trimesh.Trimesh) -> float:

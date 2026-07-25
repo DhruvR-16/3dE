@@ -226,6 +226,48 @@ def test_small_parts_are_not_rods(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# part naming
+# --------------------------------------------------------------------------- #
+
+
+def test_parts_are_named_by_colour(tmp_path):
+    """Distinct colours need no position word — "red", not "part 1"."""
+    names = a3.describe_parts(a3.art_to_parts(two_colour_blobs(tmp_path)))
+    assert any("red" in n for n in names)
+    assert any("blue" in n for n in names)
+    assert not any(n[0].isdigit() or "part" in n for n in names)
+
+
+def test_same_colour_parts_get_position_words(tmp_path):
+    """Two same-coloured lobes side by side should read left / right."""
+    img, d = _blank()
+    d.ellipse([20, 80, 100, 160], fill=(60, 90, 210))
+    d.ellipse([140, 80, 220, 160], fill=(60, 90, 210))
+    names = a3.describe_parts(a3.art_to_parts(_save(img, tmp_path, "twins")))
+    joined = " ".join(names)
+    assert "left" in joined and "right" in joined
+
+
+def test_part_names_are_unique(tmp_path):
+    names = a3.describe_parts(a3.art_to_parts(two_colour_blobs(tmp_path)))
+    assert len(set(names)) == len(names)
+
+
+def test_colour_naming_ignores_page_coloured_filler(tmp_path):
+    """A part padded with kept page-colour is named for its paint, not the page."""
+    img, d = _blank()
+    d.rectangle([60, 40, 180, 100], fill=(40, 60, 150))     # painted block
+    d.rectangle([60, 100, 180, 200], fill=(255, 255, 255))  # page-coloured tail
+    d.rectangle([58, 38, 182, 202], outline=(20, 30, 90), width=5)
+    names = a3.describe_parts(a3.art_to_parts(_save(img, tmp_path, "filler")))
+    assert not any("white" in n for n in names), names
+
+
+def test_empty_input_names_cleanly():
+    assert a3.describe_parts([]) == []
+
+
+# --------------------------------------------------------------------------- #
 # robustness
 # --------------------------------------------------------------------------- #
 
