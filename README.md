@@ -39,6 +39,7 @@ its own editable object. No other 2D→3D tool hands you pieces you can pull apa
 | **Move / rotate / scale** | ✅ local app | transform gizmo per object, real-time |
 | **Delete / restore** | ✅ local app | hides that object from the render |
 | **Export** | ✅ local app | merged `.glb` (art/mesh scenes) or `.ply` (splat scenes), edits baked in |
+| **3D print check** | ✅ local app | solidity, real size in mm, material volume, wall thickness and bed adhesion, with actionable warnings |
 | Photos → editable splat scene | ✅ Kaggle T4 | the original multi-view path: COLMAP → gsplat → SAM2 → per-Gaussian `object_id` |
 | Rigging / articulation | 🚧 idea | parts are already separate, so posing is a natural next step |
 
@@ -91,6 +92,13 @@ Three knobs on the home screen:
 **Controls:** click an object to select · `G`/`R`/`S` switch move/rotate/scale ·
 drag the gizmo · `X`/`Del` delete · `Esc` deselect · *Export edited scene*
 downloads the merged model with your edits baked in.
+
+**3D print check** — enter the size you intend to print and press *Check*. It
+reports whether each part is a closed solid a slicer will accept, the real
+dimensions and material volume, and warns about walls thinner than your nozzle
+can produce or a model with no flat face to sit on the bed. The advice is
+verified against the tool: setting *Back* to `flat` clears the bed-adhesion
+warning, and printing larger clears thin walls.
 
 Tests: `.venv/bin/python -m pytest backend/tests -q` (30 tests)
 

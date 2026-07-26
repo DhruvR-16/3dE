@@ -388,6 +388,35 @@ html[data-view="editor"] .home { display: none; }
 .segmented button:hover { color: var(--text); }
 .segmented button.active { background: var(--grad); color: white; box-shadow: 0 4px 14px -4px var(--a1-glow); }
 
+/* 3D print check */
+.print-row { display: flex; align-items: center; gap: var(--s3); }
+.print-row .btn { flex: 0 0 auto; padding: 0.45rem 0.9rem; }
+.opt-compact { flex: 1; gap: var(--s2); }
+.opt-compact input[type="number"] {
+  width: 4.5rem;
+  font: 500 var(--step-0) var(--font-mono);
+  color: var(--text);
+  background: oklch(100% 0 0 / 0.04);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.45rem;
+}
+.opt-compact .unit { font-size: var(--step--1); color: var(--text-faint); }
+.print-result {
+  font-size: var(--step--1); line-height: 1.5;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  padding: var(--s3);
+  color: var(--text-dim);
+}
+.print-result.ok { border-color: color-mix(in oklch, var(--ok) 45%, var(--glass-border)); }
+.print-result.warn { border-color: color-mix(in oklch, var(--danger) 45%, var(--glass-border)); }
+.print-head { font-weight: 600; color: var(--text); margin-bottom: 2px; }
+.print-result.ok .print-head { color: var(--ok); }
+.print-result.warn .print-head { color: oklch(80% 0.14 20); }
+.print-facts { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-faint); }
+.print-warnings { margin: var(--s2) 0 0; padding-left: 1.1em; display: flex; flex-direction: column; gap: var(--s1); }
+
 .btn-row { display: flex; gap: var(--s2); }
 .btn-row .btn { flex: 1; }
 .check { display: flex; align-items: center; gap: var(--s2); font-size: var(--step-0); color: var(--text-dim); cursor: pointer; }

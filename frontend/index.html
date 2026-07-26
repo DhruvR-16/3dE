@@ -145,6 +145,19 @@
         <button id="btn-export" class="btn btn-primary">Export edited scene</button>
       </section>
 
+      <section class="card">
+        <div class="card-label">3D print check</div>
+        <div class="print-row">
+          <label class="opt opt-compact">
+            <span class="opt-label">Size</span>
+            <input id="print-size" type="number" min="5" max="500" step="5" value="60" />
+            <span class="unit">mm</span>
+          </label>
+          <button id="btn-printcheck" class="btn btn-secondary">Check</button>
+        </div>
+        <div id="print-result" class="print-result" hidden></div>
+      </section>
+
       <footer class="keys">
         <span><kbd>click</kbd> select</span>
         <span><kbd>G</kbd><kbd>R</kbd><kbd>S</kbd> tool</span>

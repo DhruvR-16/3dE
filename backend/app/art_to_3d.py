@@ -562,6 +562,128 @@ def describe_parts(pieces: list[tuple[trimesh.Trimesh, np.ndarray]]) -> list[str
     return unique
 
 
+def thickness_map(mesh: trimesh.Trimesh, resolution: int | None = None) -> np.ndarray:
+    """Wall thickness across the model, as a grid of (max z - min z) per column.
+
+    Suited to these shapes rather than generic: inflation builds the solid as one
+    z-column per pixel, so a column's vertical extent *is* its thickness. (On a
+    general mesh with overhangs this would over-report, which is why it lives
+    beside the generator instead of being offered as a general tool.)
+
+    ``resolution`` defaults to a grid sized from the vertex count. That matters:
+    too fine a grid leaves cells holding samples from only one surface, which
+    reads as zero thickness and manufactures phantom "too thin" warnings — a
+    small part measured 61% too thin at a fixed 128 grid and 0.6% once sized.
+
+    Returns a float grid; cells the model does not cover are NaN.
+    """
+    v = mesh.vertices
+    if resolution is None:
+        # aim for ~10 vertices per covered cell so both surfaces land in each
+        resolution = int(np.clip(np.sqrt(len(v) / 10.0), 16, 128))
+    lo, hi = mesh.bounds[0][:2], mesh.bounds[1][:2]
+    span = np.where((hi - lo) > 1e-12, hi - lo, 1.0)
+    ij = np.clip(((v[:, :2] - lo) / span * (resolution - 1)).astype(int), 0, resolution - 1)
+    flat = ij[:, 1] * resolution + ij[:, 0]
+
+    zmax = np.full(resolution * resolution, -np.inf)
+    zmin = np.full(resolution * resolution, np.inf)
+    np.maximum.at(zmax, flat, v[:, 2])
+    np.minimum.at(zmin, flat, v[:, 2])
+
+    thick = zmax - zmin
+    thick[~np.isfinite(thick)] = np.nan
+    return thick.reshape(resolution, resolution)
+
+
+def print_report(
+    pieces: list[tuple[trimesh.Trimesh, np.ndarray]] | list[trimesh.Trimesh],
+    *,
+    target_mm: float = 60.0,
+    min_wall_mm: float = 0.8,
+) -> dict:
+    """Check whether the model would actually 3D print, at a chosen size.
+
+    Args:
+        pieces: meshes (or (mesh, mask) pairs as returned by art_to_parts).
+        target_mm: longest side of the whole model once scaled for printing.
+        min_wall_mm: thinnest feature the printer can produce — roughly two
+            nozzle widths; 0.8 mm suits a standard 0.4 mm nozzle.
+
+    Returns a dict with per-part results, overall size/material figures, and
+    plain-language warnings.
+    """
+    meshes = [p[0] if isinstance(p, tuple) else p for p in pieces]
+    if not meshes:
+        return {"ok": False, "warnings": ["nothing to print"], "parts": []}
+
+    lo = np.min([m.bounds[0] for m in meshes], axis=0)
+    hi = np.max([m.bounds[1] for m in meshes], axis=0)
+    longest = float(np.max(hi - lo))
+    scale = target_mm / longest if longest > 0 else 1.0
+
+    parts, warnings = [], []
+    total_volume_mm3 = 0.0
+    for i, m in enumerate(meshes):
+        thick = thickness_map(m) * scale
+        covered = thick[np.isfinite(thick)]
+        # The rim of an inflated shape tapers to nothing, so a handful of edge
+        # columns are always near-zero; judge on the 5th percentile, and report
+        # how much of the footprint is genuinely too thin.
+        p5 = float(np.percentile(covered, 5)) if covered.size else 0.0
+        thin_frac = float((covered < min_wall_mm).mean()) if covered.size else 1.0
+        vol_mm3 = float(m.volume) * scale**3
+        total_volume_mm3 += vol_mm3
+
+        part = {
+            "id": i,
+            "is_printable_solid": bool(m.is_volume),
+            "watertight": bool(m.is_watertight),
+            "winding_consistent": bool(m.is_winding_consistent),
+            "size_mm": [round(float(x) * scale, 2) for x in (m.bounds[1] - m.bounds[0])],
+            "volume_cm3": round(vol_mm3 / 1000.0, 3),
+            "wall_p5_mm": round(p5, 2),
+            "too_thin_fraction": round(thin_frac, 3),
+        }
+        parts.append(part)
+
+        if not m.is_volume:
+            warnings.append(f"part {i}: not a closed solid — a slicer may reject it")
+        # Trigger on the 5th-percentile wall rather than the thin *area*: an
+        # inflated rim always tapers to nothing, so some thin fraction is normal
+        # and a fraction threshold either cries wolf or (at 25%) stays silent on
+        # a part whose walls are already down at 0.3 mm. p5 tracks real
+        # printability — it clears 0.8 mm at 60 mm and fails below ~30 mm.
+        if p5 < min_wall_mm:
+            warnings.append(
+                f"part {i}: walls get down to {p5:.2f} mm (under {min_wall_mm} mm) over "
+                f"{thin_frac:.0%} of it — print it larger or raise Puffiness"
+            )
+
+    # A flat face to sit on the bed makes printing far easier.
+    flat_base = max(
+        (float(m.area_faces[m.face_normals[:, 2] < -0.99].sum() / m.area.clip(1e-12)) for m in meshes),
+        default=0.0,
+    )
+    if flat_base < 0.05:
+        warnings.append(
+            "no flat face to rest on the bed — set Back to 'flat' for a relief that "
+            "prints without supports"
+        )
+
+    return {
+        "ok": not warnings,
+        "target_mm": target_mm,
+        "min_wall_mm": min_wall_mm,
+        "scale_factor": round(scale, 4),
+        "overall_size_mm": [round(float(x) * scale, 2) for x in (hi - lo)],
+        "material_cm3": round(total_volume_mm3 / 1000.0, 2),
+        "largest_flat_base_fraction": round(flat_base, 3),
+        "parts": parts,
+        "warnings": warnings,
+    }
+
+
 def volume_ratio(mesh: trimesh.Trimesh) -> float:
     """thinnest/longest bbox axis. ~0 = flat sheet, higher = properly solid."""
     extents = sorted(mesh.bounds[1] - mesh.bounds[0])

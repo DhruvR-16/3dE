@@ -302,6 +302,58 @@ def test_empty_input_names_cleanly():
 
 
 # --------------------------------------------------------------------------- #
+# 3D print checks
+# --------------------------------------------------------------------------- #
+
+
+def test_generated_models_are_printable_solids(tmp_path):
+    """is_volume is what a slicer needs: closed, consistently wound, positive."""
+    report = a3.print_report(a3.art_to_parts(two_colour_blobs(tmp_path)))
+    assert all(p["is_printable_solid"] for p in report["parts"])
+
+
+def test_report_scales_to_the_requested_size(tmp_path):
+    report = a3.print_report(a3.art_to_parts(disc(tmp_path)), target_mm=60)
+    assert max(report["overall_size_mm"]) == pytest.approx(60, rel=0.02)
+    assert report["material_cm3"] > 0
+
+
+def test_thin_walls_are_flagged_when_printed_small(tmp_path):
+    """Same model, two sizes: fine when big, flagged when shrunk."""
+    pieces = a3.art_to_parts(disc(tmp_path), thickness=0.5)
+    big = a3.print_report(pieces, target_mm=80)
+    small = a3.print_report(pieces, target_mm=6)
+    assert big["parts"][0]["wall_p5_mm"] > small["parts"][0]["wall_p5_mm"]
+    assert any("walls get down to" in w for w in small["warnings"])
+    assert not any("walls get down to" in w for w in big["warnings"])
+
+
+def test_flat_back_satisfies_the_bed_adhesion_check(tmp_path):
+    """The advice the report gives must actually clear the warning."""
+    p = disc(tmp_path)
+    rounded = a3.print_report(a3.art_to_parts(p, back=1.0), target_mm=60)
+    relief = a3.print_report(a3.art_to_parts(p, back=0.0), target_mm=60)
+    assert any("flat face" in w for w in rounded["warnings"])
+    assert not any("flat face" in w for w in relief["warnings"])
+    assert relief["largest_flat_base_fraction"] > rounded["largest_flat_base_fraction"]
+
+
+def test_thickness_grid_is_sized_to_the_mesh(tmp_path):
+    """A fixed fine grid invents zero-thickness cells on smaller parts."""
+    mesh = a3.art_to_mesh(disc(tmp_path))
+    auto = a3.thickness_map(mesh)
+    too_fine = a3.thickness_map(mesh, resolution=512)
+    zero_auto = np.nanmean(auto[np.isfinite(auto)] < 1e-6)
+    zero_fine = np.nanmean(too_fine[np.isfinite(too_fine)] < 1e-6)
+    assert zero_auto < zero_fine
+
+
+def test_print_report_handles_no_parts():
+    report = a3.print_report([])
+    assert report["ok"] is False and report["parts"] == []
+
+
+# --------------------------------------------------------------------------- #
 # robustness
 # --------------------------------------------------------------------------- #
 

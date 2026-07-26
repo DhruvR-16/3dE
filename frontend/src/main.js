@@ -270,6 +270,55 @@ function bindDropzone() {
 
 /* -------------------------------- keyboard ------------------------------- */
 
+/* ------------------------------ print check ------------------------------ */
+
+async function handlePrintCheck() {
+  if (!currentManifest) return;
+  const out = document.getElementById('print-result');
+  const btn = document.getElementById('btn-printcheck');
+  const size = Number(document.getElementById('print-size')?.value || 60);
+
+  out.hidden = false;
+  out.className = 'print-result';
+  out.textContent = 'Checking…';
+  btn.disabled = true;
+  try {
+    const res = await fetch(
+      `/api/scenes/${encodeURIComponent(currentManifest.id)}/print-check?target_mm=${size}`
+    );
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail ?? detail; } catch { /* keep */ }
+      throw new Error(detail);
+    }
+    const r = await res.json();
+    const [w, h, d] = r.overall_size_mm;
+    const head = document.createElement('div');
+    head.className = 'print-head';
+    head.textContent = r.ok ? '✓ Ready to print' : '⚠ Needs attention';
+    const facts = document.createElement('div');
+    facts.className = 'print-facts';
+    facts.textContent = `${w} × ${h} × ${d} mm · ${r.material_cm3} cm³ material · ${r.parts.length} part(s)`;
+    out.replaceChildren(head, facts);
+    if (r.warnings.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'print-warnings';
+      r.warnings.forEach((wtext) => {
+        const li = document.createElement('li');
+        li.textContent = wtext;
+        ul.appendChild(li);
+      });
+      out.appendChild(ul);
+    }
+    out.classList.add(r.ok ? 'ok' : 'warn');
+  } catch (err) {
+    out.className = 'print-result warn';
+    out.textContent = `Check failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function bindKeyboard() {
   window.addEventListener('keydown', (e) => {
     if (document.documentElement.getAttribute('data-view') !== 'editor') return;
@@ -339,6 +388,7 @@ async function init() {
   showView('home');
   window.__editor = editor;
 
+  document.getElementById('btn-printcheck')?.addEventListener('click', handlePrintCheck);
   document.getElementById('btn-home')?.addEventListener('click', () => showView('home'));
   document.getElementById('btn-try-sample')?.addEventListener('click', () => {
     if (availableScenes.length) loadScene(availableScenes[0].id);

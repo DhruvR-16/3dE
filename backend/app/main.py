@@ -20,6 +20,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import trimesh
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from fastapi.concurrency import run_in_threadpool
@@ -253,6 +254,35 @@ async def art_to_3d_scene(
         shutil.rmtree(scene_path, ignore_errors=True)
         logger.exception("art->3D failed")
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"art->3D failed: {e}")
+
+
+@app.get("/api/scenes/{scene_id}/print-check")
+def print_check(scene_id: str, target_mm: float = 60.0, min_wall_mm: float = 0.8) -> dict:
+    """Would this scene actually 3D print, at the given size?
+
+    Reports per-part solidity, real-world dimensions, material volume and wall
+    thickness, plus plain-language warnings (thin walls, no flat base).
+    """
+    try:
+        sdir = scene_store.scene_dir(scene_id)
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e))
+    if not scene_store.is_mesh_scene(scene_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "print check applies to mesh scenes (art / image reconstructions)",
+        )
+    if target_mm <= 0 or min_wall_mm <= 0:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "sizes must be positive")
+
+    meshes = []
+    for glb in sorted((sdir / "objects").glob("*.glb")):
+        loaded = trimesh.load(glb, process=False, force="mesh")
+        meshes.append(loaded)
+    if not meshes:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"scene {scene_id!r} has no objects")
+
+    return art_to_3d.print_report(meshes, target_mm=target_mm, min_wall_mm=min_wall_mm)
 
 
 @app.get("/api/scenes", response_model=list[SceneSummary])
